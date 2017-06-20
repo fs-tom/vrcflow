@@ -4,5 +4,5 @@
   :license {:name "Eclipse Public License"
             :url "http://www.eclipse.org/legal/epl-v10.html"}
   :dependencies [[org.clojure/clojure  "1.8.0"]
-                 [spork "0.2.0.1-SNAPSHOT"]
+                 [spork "0.2.0.2-SNAPSHOT"]
                  [piccolotest "0.1.2-SNAPSHOT"]])
