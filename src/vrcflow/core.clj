@@ -137,10 +137,24 @@ Health Promotion Operations	HPO	Leader/stakeholder support, installation-level l
 ;;How long do services take?
 ;;Need data...
 
-(defn service-net
+#_(defn service-net
   (->> (tbl/table-records svc-table)
        (map (:Label :Service))
        )
   (->> (tbl/table-records cap-table)
        (map (juxt :Name :Label :Focus :Capacity))       
        ))
+
+;;We're maintaining a rule-db that maps providers to services.
+;;Services are sort of the atomic bits of a service plan.
+
+;;  A service plan is - a service - that's composed of one or more services.
+;;  So service ::
+;;         | Service
+;;         | ServicePlan [Service]
+
+
+;;Screening/intake provides clients with a ServicePlan, initially
+;;with a single Service.
+
+;;  We should be 
