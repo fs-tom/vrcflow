@@ -5,7 +5,7 @@
    [spork.entitysystem.store :refer [defentity keyval->component] :as store]
    [spork.util.table   :as tbl]
    [spork.sim.core     :as sim]
-   [spork.ai  [machine :as fsm]]
+   [spork.ai           [behaviorcontext :as b]]
    [spork.cljgraph.core :as graph]
    ))
 ;;Generic client processing algorithm.
@@ -16,12 +16,13 @@
 
 (defentity client
   "Provides a constructor for building clients."
-  [id & {:keys [needs arrival exit]}]
+  [id & {:keys [needs arrival exit services]}]
   {:components
    [:name    id
     :needs   needs 
     :arrival arrival
     :exit    exit
+    :services []
     ]})
 
 (defentity provider
@@ -37,9 +38,6 @@
 ;;So, service-providers can serve up to capacity clients....
 ;;When a client is undergoing a service, it consumes
 ;;capacity and takes up a slot. [typical]
-
-
-
 
 ;;The basic model here is that needs transform into
 ;;services.
@@ -153,8 +151,15 @@ Health Promotion Operations	HPO	Leader/stakeholder support, installation-level l
 ;;         | Service
 ;;         | ServicePlan [Service]
 
+;;In the db, we only have atomic services defined (at the moment....).
+
 
 ;;Screening/intake provides clients with a ServicePlan, initially
 ;;with a single Service.
 
-;;  We should be 
+;;As the client processes through the system, additional services may
+;;be acquired based on unidentified needs...
+
+
+;;Entity Lifecycle:
+;;  Entity enters the system with some randomly generated
