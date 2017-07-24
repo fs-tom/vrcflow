@@ -161,5 +161,139 @@ Health Promotion Operations	HPO	Leader/stakeholder support, installation-level l
 ;;be acquired based on unidentified needs...
 
 
-;;Entity Lifecycle:
-;;  Entity enters the system with some randomly generated
+;;Entity Behavior:
+;;We'll compose complex behavior for the entity lifecycle by defining
+;;simpler behaviors and going from there.
+
+(def ^:constant +default-wait-time+ 30)
+
+(defn with-entity [m]
+  (->alter #(swap! (:entity m) merge m)))
+
+;;this is a subset of what we have in the data; but it'll work
+;;for the moment.
+(def basic-needs
+  ["Dealing with family member mobilizing/deploying or mobilized/deployed?"
+   "Family Budget Problems?"
+
+   "Spiritual Counseling?"
+   "About to Get Married?"
+
+   "Trouble coping?"
+   "Addiction?"
+   "Need someone to talk to?"
+
+   "Quitting Smoking?"
+   "Overworked?"
+   "Bad grades?"
+   "Money Problems?"
+
+   "Score < 210 Overall Fitness Test"
+   "Difficulty Meeting Fitness Test Requirements"
+   "Athletic Performance Enhancement"
+   "Energy Management"
+   "Time Management"
+   "Stress Management"
+   
+   "Insomnia"
+   "Pain Management"
+   "Weight Loss Support"
+   "Special Diet Needs"
+   "Cooking Instructions"
+   "Command Referral for Weight Failure"])
+
+;;Entities need to go to intake for assessment.
+;;As entities self-assess, they wait in the intake.
+;;Upon completing self-assessment, they meet with
+;;a counselor to derive services and get routed.
+(befn compute-needs {:keys [ctx entity] :as benv}
+      ;;we have a random set of needs we can derive
+      ;;it'd be nice to have some proportional
+      ;;representation of patients here...
+      ;;there may be some literature from state
+      ;;health to inform our sampling...
+      ;;naive way is to just use a uniform distro
+      ;;with even odds for picking a need.
+      ;;how many needs per person?
+      ;;make it exponentially hard to have each additional need?      
+      )
+
+;;If the entity has needs, derives a set of needs based on
+;;services.  This is a simple projection of the needs the
+;;entity presents with to the services associated with said
+;;need per the input data and the service-network.
+(befn compute-services {:keys [ctx entity] :as benv}
+  (when-let [needs (:needs @entity)]
+    (let [proposed-services (needs->services needs (:service-network @ctx))]
+      (with-entity {:needs nil
+                    :services proposed-services}))))
+
+;;Sets the entity's upper bound on waiting
+(befn reset-wait-time {:keys [entity] :as benv}
+      (with-entity {:wait-time +default-wait-time+}))
+
+;;find the next service we'd like to try to acquire.
+;;Eventually, we'll go by priority.  For now, we'll
+;;just select the next service that happens to be on our
+;;chain of services...
+(befn next-available-service
+      {:keys [entity] :as benv}
+      )
+
+;;enter/spawn behavior
+(def enter
+    (->and [compute-needs reset-wait-time]))
+
+;;find-services
+;;  should we advertise all services we're interested in?
+;;  or go by entity-priority?
+(def find-services
+  (->seq [(->if  has-needs? needs->services)
+          (->if  has-services? next-available-service)]))
+
+;;get-service
+(def get-service
+  (->seq [move-to-service
+          reset-wait-time
+          reset-service-time
+          wait-in-service]))
+
+#_(def await-service
+    (->and [has-wait-time?
+            register-service
+            move-to-waiting
+            wait]))
+
+;;registering for a service puts the entity in a queue for said service.
+;;services are effectively resources.
+;;When we leave a service, we notify the next entity (iff the entity is
+;;waiting) that the service is available.
+;;This models the service as a resource.
+(befn register-service ^behaviorenv {:keys [ctx next-service statedata] :as benv}
+      (when next-service
+        ;;entity should be put on the waiting list, notified when the service is next available.        
+        )
+      )
+
+(befn should-move? ^behaviorenv {:keys [next-position statedata] :as benv}
+      (when (or next-position
+                (zero? (fsm/remaining statedata)) ;;time is up...
+                (spawning? statedata))
+        (success benv)))
+
+;;Simulation Systems
+;;==================
+
+;;Update Clients [notify clients of the passage of time, leading to
+;;clients leaving services, registering with new services, or preparing to leave.
+(defn update-clients   [ctx])
+;;Update Services [Services notify registered, non-waiting clients of availability,
+;;                 clients move to services]
+;;List newly-available services.
+(defn update-services  [ctx])
+;;For newly-available services with clients waiting, allocate the next n clients
+;;based on available capacity.
+(defn allocate-services [ctx])
+;;Any entities with a :prepared-to-leave component are discharged from the system,
+;;recording statistics along the way.
+(defn finalize-clients [ctx])
