@@ -3,9 +3,43 @@
 (ns vrcflow.core
   (:require 
    [spork.entitysystem.store :refer [defentity keyval->component] :as store]
-   [spork.util.table   :as tbl]
-   [spork.sim.core     :as sim]
-   [spork.ai           [behaviorcontext :as b]]
+   [spork.util [table   :as tbl] [stats :as stats]]
+   [spork.sim [simcontext     :as sim]]
+   [spork.ai           [behaviorcontext :as bctx] [messaging :refer [send!! handle-message! ->msg]]]
+   [spork.ai.behavior 
+             :refer [beval
+                     success?
+                     success
+                     run
+                     fail
+                     behave
+                     ->seq
+                     ->elapse
+                     ->not
+                     ->do
+                     ->alter
+                     ->elapse-until
+                     ->leaf
+                     ->wait-until
+                     ->if
+                     ->and
+                     ->and!
+                     ->pred
+                     ->or
+                     ->bnode
+                     ->while
+                     ->reduce
+                     always-succeed
+                     always-fail
+                     bind!
+                     bind!!
+                     merge!
+                     merge!!
+                     push!
+                     return!
+                     val!
+                     befn
+                     ] :as b]
    [spork.cljgraph.core :as graph]
    ))
 ;;Generic client processing algorithm.
@@ -143,6 +177,18 @@ Health Promotion Operations	HPO	Leader/stakeholder support, installation-level l
        (map (juxt :Name :Label :Focus :Capacity))       
        ))
 
+;;potentially make this the default for empty contexts.
+;;just enforce the idea that our entity state lives in
+;;an entity store.
+(def emptysim
+  "An empty simulation context with an initial start time, 
+   and an empty entity store"
+  (->> (assoc sim/empty-context :state store/emptystore)
+       (sim/add-time 0)
+       (sim/merge-entity
+        {:parameters {:seed 5555
+                      :wait-time 15}})))
+
 ;;We're maintaining a rule-db that maps providers to services.
 ;;Services are sort of the atomic bits of a service plan.
 
@@ -167,6 +213,7 @@ Health Promotion Operations	HPO	Leader/stakeholder support, installation-level l
 
 (def ^:constant +default-wait-time+ 30)
 
+;;helper function, maybe migrate to behavior lib.
 (defn with-entity [m]
   (->alter #(swap! (:entity m) merge m)))
 
@@ -202,10 +249,23 @@ Health Promotion Operations	HPO	Leader/stakeholder support, installation-level l
    "Cooking Instructions"
    "Command Referral for Weight Failure"])
 
+;;this is just a shim for generating needs.
+(defn random-needs [n]
+  (reduce (fn [acc x]
+            (if (acc x) acc
+                (let [nxt (conj acc x)]
+                  (if (== (count nxt) n)
+                    (reduced acc)
+                    nxt))))
+          #{}
+          (repeatedly #(rand-nth basic-needs))))
+
 ;;Entities need to go to intake for assessment.
 ;;As entities self-assess, they wait in the intake.
 ;;Upon completing self-assessment, they meet with
 ;;a counselor to derive services and get routed.
+(comment
+  
 (befn compute-needs {:keys [ctx entity] :as benv}
       ;;we have a random set of needs we can derive
       ;;it'd be nice to have some proportional
@@ -215,7 +275,8 @@ Health Promotion Operations	HPO	Leader/stakeholder support, installation-level l
       ;;naive way is to just use a uniform distro
       ;;with even odds for picking a need.
       ;;how many needs per person?
-      ;;make it exponentially hard to have each additional need?      
+      ;;make it exponentially hard to have each additional need?
+      
       )
 
 ;;If the entity has needs, derives a set of needs based on
@@ -281,19 +342,117 @@ Health Promotion Operations	HPO	Leader/stakeholder support, installation-level l
                 (spawning? statedata))
         (success benv)))
 
+)
+
 ;;Simulation Systems
 ;;==================
+;;Since we're simulating using a stochastic process,
+;;we will unfold a series of arrival times using some distribution.
+;;We need something to indicate arrivals evantfully.
+
+(defn init
+  "Creates an initial context with a fresh distribution."
+  ([ctx]
+   ;;initialize the context
+   ;;we'll setup a recurring arrival process.
+   (let [f (stats/exponential-dist 5)]
+     (sim/merge-entity
+      {:arrivals {:pending (next-batch (sim/get-time isim) (comp long f)) 
+                  :arrival-fn f}}
+      ctx)))
+  ([] (init emptysim)))
+
+;;A) compute next arrivals.
+;;B) handle current arrivals.
+;;  note: arrivals can be batches, i.e. arbitrary size.
+;;        we can default to 1.
+;;
+;;We need to maintain a few things:
+;;   {:pending-arrivals [should be consistent with updates]}
+;;        
+
+;;we can add these to simcontext.
+;;possible short-hand for defining
+;;recurring activities.
+#_(activity :arrival-manager
+            :schedule      (exponential 3) 
+            ;;entity update behavior
+            :behavior      (->seq [schedule-next-arrivals
+                                   handle-current-arrivals])
+            ;;responds to events..when events are fired, we forward
+            ;;them to the behavior
+            :routing       {:arrival handle-arrivals})
+
+;;generate an update for itself the next time...
+(defn next-batch
+  "Given a start time t, and an interarrival time
+   function f::nil->number, generates a map of 
+   {:n arrival-count :t next-arrival-time} where t 
+   is computed by sampling from f, such that the 
+   interarrival time is non-zero.  Zero-values 
+   are aggregated into the batch via incrementing
+   n, accounting for concurrent arrivals (i.e. batches)."
+  [t f]
+  (loop [dt (f)
+         acc 1]
+    (if (pos? dt)
+      {:n acc :t (+ dt t)} 
+      (recur (f) (inc acc)))))
+
+(defn batch->entities [{:keys [n t] :as batch}]
+  (for [idx (range n)]
+    (let [nm (str t "_" idx)]
+      (client nm :arrival t))))
+
+;;we'll encode arrivals as updates of type :arrival
+(defn process-arrivals
+  "The arrivals system processes batches of entities and schedules more arrival
+   updates.  batch->entities should be a function that maps a batch, 
+   {:t long :n long} -> [entity*]"
+  ([batch->entities ctx]
+   (if-let [arrivals? (seq (sim/get-updates :arrival (sim/current-time ctx) ctx))]
+     (let [_      (spork.ai.core/debug "[<<<<<<Processing Arrivals!>>>>>>]")
+           arr    (store/get-entity ctx :arrival) ;;known entity arrivals...
+           {:keys [pending arrival-fn]}    arr
+           new-arrivals (next-batch (:t pending) arrival-fn)
+           new-entities (batch->entities pending)]
+       (->> (-> ctx 
+                (sim/drop-update :arrival (:t pending) :arrival)
+                (store/assoce    :arrival :arrivals new-arrivals)
+                  (store/add-entities new-entities))
+            (sim/request-update (:t new-arrivals) :arrival :arrival)))
+     (do (spork.ai.core/debug "No arrivals!")
+         ctx)))
+  ([ctx] (process-arrivals batch->entities ctx)))
+
+(defn update-by
+  "Aux function to update via specific update-type.  Sends a default :update 
+   message."
+  [update-type ctx]
+  (let [t (sim/current-time ctx)]
+    (->> (sim/get-updates update-type t)
+         (keys)
+         (reduce (fn [acc e] (send!! e :update t acc)) ctx))))
 
 ;;Update Clients [notify clients of the passage of time, leading to
 ;;clients leaving services, registering with new services, or preparing to leave.
-(defn update-clients   [ctx])
+;;We can just send update messages...
+(defn update-clients [ctx] (update-by :client ctx))
 ;;Update Services [Services notify registered, non-waiting clients of availability,
 ;;                 clients move to services]
 ;;List newly-available services.
-(defn update-services  [ctx])
+(defn update-services  [ctx] (update-by :service ctx))
 ;;For newly-available services with clients waiting, allocate the next n clients
 ;;based on available capacity.
-(defn allocate-services [ctx])
+(defn allocate-services [ctx] )
 ;;Any entities with a :prepared-to-leave component are discharged from the system,
 ;;recording statistics along the way.
-(defn finalize-clients [ctx])
+(defn finalize-clients [ctx]  )
+
+
+
+;;Notes // Pending:
+;;Priority rules may be considered (we don't here).  It's first-come-first-serve
+;;priority right now.  Do they matter in practice?  Is there an actual
+;;triage process?
+
