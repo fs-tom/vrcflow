@@ -344,6 +344,49 @@ Health Promotion Operations	HPO	Leader/stakeholder support, installation-level l
 
 )
 
+;;generate an update for itself the next time...
+(defn next-batch
+  "Given a start time t, and an interarrival time
+   function f::nil->number, generates a map of 
+   {:n arrival-count :t next-arrival-time} where t 
+   is computed by sampling from f, such that the 
+   interarrival time is non-zero.  Zero-values 
+   are aggregated into the batch via incrementing
+   n, accounting for concurrent arrivals (i.e. batches)."
+  [t f]
+  (loop [dt (f)
+         acc 1]
+    (if (pos? dt)
+      {:n acc :t (+ dt t)} 
+      (recur (f) (inc acc)))))
+
+(defn batch->entities [{:keys [n t] :as batch}]
+  (for [idx (range n)]
+    (let [nm (str t "_" idx)]
+      (client nm :arrival t))))
+
+;;Note: we can handle arrivals a couple of different ways.
+;;The way I'm going here is to have a central entity that
+;;batches updates.  We have an explicit arrival process
+;;in our simulation system.  This assumes we never have
+;;arrivals on the same day (we could do something like that
+;;though, we just don't necessarily advance time if
+;;unplanned arrivals occur).
+(defn schedule-arrivals
+  "Given a batch order, schedules new arrivals for ctx."
+  [batch ctx]
+  (->> (store/assoce ctx :arrival :pending batch)
+       (sim/request-update (:t batch) :arrival :arrival)))
+
+(defn handle-arrivals
+  "Pulls out the next arrival batch from the :arrival entity, 
+   consuming the update in the process."
+  [t new-entities ctx]
+  (-> ctx 
+      (sim/drop-update :arrival t :arrival) ;eliminate current update.
+      (store/add-entities new-entities))) ;;add new entities.
+
+
 ;;Simulation Systems
 ;;==================
 ;;Since we're simulating using a stochastic process,
@@ -351,15 +394,13 @@ Health Promotion Operations	HPO	Leader/stakeholder support, installation-level l
 ;;We need something to indicate arrivals evantfully.
 
 (defn init
-  "Creates an initial context with a fresh distribution."
+  "Creates an initial context with a fresh distribution, schedules initial
+   batch of arrivals too."
   ([ctx]
-   ;;initialize the context
-   ;;we'll setup a recurring arrival process.
-   (let [f (stats/exponential-dist 5)]
-     (sim/merge-entity
-      {:arrivals {:pending (next-batch (sim/get-time isim) (comp long f)) 
-                  :arrival-fn f}}
-      ctx)))
+   (let [f       (stats/exponential-dist 5)]
+     (->>  ctx
+           (sim/merge-entity  {:arrivals {:arrival-fn f}})
+           (schedule-arrivals (next-batch (sim/get-time ctx) (comp long f))))))
   ([] (init emptysim)))
 
 ;;A) compute next arrivals.
@@ -383,27 +424,6 @@ Health Promotion Operations	HPO	Leader/stakeholder support, installation-level l
             ;;them to the behavior
             :routing       {:arrival handle-arrivals})
 
-;;generate an update for itself the next time...
-(defn next-batch
-  "Given a start time t, and an interarrival time
-   function f::nil->number, generates a map of 
-   {:n arrival-count :t next-arrival-time} where t 
-   is computed by sampling from f, such that the 
-   interarrival time is non-zero.  Zero-values 
-   are aggregated into the batch via incrementing
-   n, accounting for concurrent arrivals (i.e. batches)."
-  [t f]
-  (loop [dt (f)
-         acc 1]
-    (if (pos? dt)
-      {:n acc :t (+ dt t)} 
-      (recur (f) (inc acc)))))
-
-(defn batch->entities [{:keys [n t] :as batch}]
-  (for [idx (range n)]
-    (let [nm (str t "_" idx)]
-      (client nm :arrival t))))
-
 ;;we'll encode arrivals as updates of type :arrival
 (defn process-arrivals
   "The arrivals system processes batches of entities and schedules more arrival
@@ -414,13 +434,11 @@ Health Promotion Operations	HPO	Leader/stakeholder support, installation-level l
      (let [_      (spork.ai.core/debug "[<<<<<<Processing Arrivals!>>>>>>]")
            arr    (store/get-entity ctx :arrival) ;;known entity arrivals...
            {:keys [pending arrival-fn]}    arr
-           new-arrivals (next-batch (:t pending) arrival-fn)
-           new-entities (batch->entities pending)]
-       (->> (-> ctx 
-                (sim/drop-update :arrival (:t pending) :arrival)
-                (store/assoce    :arrival :arrivals new-arrivals)
-                  (store/add-entities new-entities))
-            (sim/request-update (:t new-arrivals) :arrival :arrival)))
+           new-entities (batch->entities pending)
+           new-batch    (next-batch (:t pending) arrival-fn)]
+       (->> ctx
+            (handle-arrivals (:t pending) new-entities)
+            (schedule-arrivals new-batch)))
      (do (spork.ai.core/debug "No arrivals!")
          ctx)))
   ([ctx] (process-arrivals batch->entities ctx)))
