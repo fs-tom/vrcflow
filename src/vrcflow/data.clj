@@ -57,10 +57,13 @@ Chaplain Services	CHPLN SVCS	Counseling, relationships, stress management	1
 Army Wellness Center	AWC	Individual-level activity, nutrition, weight management, and tobacco use screening	13
 Army Public Health Nursing	APHN	Group and individual-level health promotion activities, health risk assessment, and tobacco cessation services 	8
 Nutritional Medicine	NUTR SVCS	Individual-level counseling and group education/classes	2
-Health Promotion Operations	HPO	Leader/stakeholder support, installation-level laison 	1")
+Health Promotion Operations	HPO	Leader/stakeholder support, installation-level laison 	1
+VRC Reception Area	VRC	Intake/Screening	2
+VRC Waiting Area	WAIT	Place for folks to wait	28
+Teaching Kitchen	TK	Place to learn how to cook	20")
 
 (def prompts
-"Category	Target	Recommended	Service	Original
+  "Category	Target	Recommended	Service	Original
 Family/Social	Dealing with family member mobilizing/deploying or mobilized/deployed?		Mobilization/Deployment Support	FALSE
 Family/Social	Family Budget Problems?		Financial Readiness	FALSE
 Spiritual	Spiritual Counseling?	Chaplain Services	Spiritual Resiliency / Counseling	FALSE
@@ -84,7 +87,10 @@ Sleep	Pain Management	Military Family Life Consultant	Health Assessment Review	T
 Nutrition	Weight Loss Support	Nutrition Care (RD or Tech)	Individualized Counseling	TRUE
 Nutrition	Special Diet Needs	Nutrition Care (RD or Tech)	Individualized Counseling	TRUE
 Nutrition	Cooking Instructions	Nutrition Care (RD or Tech)	Individual/Group Instruction	TRUE
-Nutrition	Command Referral for Weight Failure	Nutrition Care (RD or Tech)	Individualized Counseling	TRUE")
+Nutrition	Command Referral for Weight Failure	Nutrition Care (RD or Tech)	Individualized Counseling	TRUE
+Intake	Self Assessment		Screening	FALSE
+Intake	Where do I go?		Routing	FALSE
+Intake	Where can I wait?		Waiting	FALSE")
 
 (def svc-table (tbl/tabdelimited->table services   :schema (:services schemas)))
 (def cap-table (tbl/tabdelimited->table capacities :schema (:capacities schemas)))

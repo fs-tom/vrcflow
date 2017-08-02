@@ -6,7 +6,8 @@
    [spork.entitysystem.store :refer [defentity keyval->component] :as store]
    [spork.util [table   :as tbl] [stats :as stats]]
    [spork.sim [simcontext     :as sim]]
-   [spork.ai           [behaviorcontext :as bctx] [messaging :refer [send!! handle-message! ->msg]]]
+   [spork.ai           [behaviorcontext :as bctx] [messaging :refer [send!! handle-message! ->msg]]
+             [core :refer [debug]]]
    [spork.ai.behavior 
              :refer [beval
                      success?
@@ -123,24 +124,65 @@
 
 ;;How long do services take?
 ;;Need data...
-
-
-(defn service-net []
-  (let [nodes   (tbl/table-records data/cap-table)
-        arcs    (for [r (tbl/table-records data/svc-table)]
-                  [(:Services r) (:Name r) (:Minutes r)])
-        services nil #_(for [nd (map second arcs)]
-                        [:service nd])
-        targets  (for [r (tbl/table-records data/prompt-table)]
-                   [(:Target r) (:Service r)])
-        indicators  (for [nd (map first targets)]
-                      [:indicator nd])]
-    (-> (reduce (fn [acc nd]
-                  (graph/conj-node acc (:Name nd) nd))
+(defn service-net
+  "Creates a service network that maintains the hierarchical
+  relationship - and temporal relations - between indicators,
+  services, and service providers.  Maintains sets of metadata for
+  indicators, services, and providers to support relational queries.
+  Requires input sequences of capacity records, service records, and
+  targeting prompt records."
+  ([caps svcs prompts]
+   (let [nodes     caps
+         providers (for [r nodes]
+                     [:provider (:Name r)])
+         arcs      (for [r svcs]
+                     [(:Name r) (:Services r) (:Minutes r)])
+         services nil #_(for [nd (map secondt arcs)]
+                          [:service nd])
+         targets  (for [r prompts]
+                    [(:Service r) (:Target r)])
+         indicators  nil #_(for [nd (map first targets)]
+                             [:indicator nd])]
+     (-> (reduce (fn [acc nd]
+                   (graph/conj-node acc (:Name nd) nd))
                 graph/empty-graph nodes)
-        (graph/add-arcs arcs)
-        (graph/add-arcs targets)
-        (graph/add-arcs (concat services indicators)))))
+         (graph/add-arcs arcs)
+         (graph/add-arcs targets)
+         (graph/add-arcs (concat services indicators providers))
+         (with-meta {:services   (distinct (map second arcs))
+                     :providers  (distinct (map second providers))
+                     :indicators (distinct (map second targets))}))))
+  ([] (service-net (tbl/table-records data/cap-table)
+                   (tbl/table-records data/svc-table)
+                   (tbl/table-records data/prompt-table))))
+
+(def basic-network (service-net))
+;;Service network API
+;;===================
+
+;;Services are children of :service
+(defn services       [sn]  (:services (meta sn)))
+;;indicators are children of :indicator
+(defn indicators     [sn]  (:indicators (meta sn)))
+(defn need->services [need service-net]
+  (graph/sources service-net need))
+
+(defn service->providers [service service-net]
+  (graph/sources service-net service))
+
+(defn service-plan
+  "A service plan consists of building a reduced map of 
+   needs to services.  This provides a basis for addressing
+   the client's needs via services.  The client then 
+   tries to find an available service to meet a need.
+   As services are acquired, needs are met."
+  [needs service-net]
+  (let [svcs->needs (map #(vector (need->services % service-net) %) needs)]
+    (reduce (fn [acc [svcs needs-addressed :as s]]              
+              (assoc acc (if (= (count svcs) 1)
+                           (first svcs)
+                           svcs) needs-addressed))
+            {} svcs->needs)))
 
 ;;potentially make this the default for empty contexts.
 ;;just enforce the idea that our entity state lives in
@@ -179,40 +221,16 @@
 (def ^:constant +default-wait-time+ 30)
 
 ;;helper function, maybe migrate to behavior lib.
-(defn with-entity [m]
-  (->alter #(swap! (:entity m) merge m)))
+(defn alter-entity [m]
+  (->do #(swap! (:entity %) merge m)))
 
 ;;this is a subset of what we have in the data; but it'll work
 ;;for the moment.
 (def basic-needs
-  ["Dealing with family member mobilizing/deploying or mobilized/deployed?"
-   "Family Budget Problems?"
-
-   "Spiritual Counseling?"
-   "About to Get Married?"
-
-   "Trouble coping?"
-   "Addiction?"
-   "Need someone to talk to?"
-
-   "Quitting Smoking?"
-   "Overworked?"
-   "Bad grades?"
-   "Money Problems?"
-
-   "Score < 210 Overall Fitness Test"
-   "Difficulty Meeting Fitness Test Requirements"
-   "Athletic Performance Enhancement"
-   "Energy Management"
-   "Time Management"
-   "Stress Management"
-   
-   "Insomnia"
-   "Pain Management"
-   "Weight Loss Support"
-   "Special Diet Needs"
-   "Cooking Instructions"
-   "Command Referral for Weight Failure"])
+  "For testing purposes, provides a vector of default needs 
+   we can use for random needs generation, as a function of 
+   the basic network."
+  (vec (indicators basic-network)))
 
 ;;this is just a shim for generating needs.
 (defn random-needs
@@ -222,15 +240,14 @@
              (if (acc x) acc
                  (let [nxt (conj acc x)]
                    (if (== (count nxt) n)
-                     (reduced acc)
+                     (reduced nxt)
                      nxt))))
            #{}
            (repeatedly #(rand-nth needs))))
   ([n] (random-needs basic-needs n)))
 
-
 (defn echo [msg]
-  (fn [ctx] (do (spork.ai.core/debug msg) (success ctx))))
+  (fn [ctx] (do (debug msg) (success ctx))))
 
 ;;Entities need to go to intake for assessment.
 ;;As entities self-assess, they wait in the intake.
@@ -248,11 +265,11 @@
 ;;make it exponentially hard to have each additional need?
 (befn compute-needs {:keys [ctx entity parameters] :as benv}
  (let [needs-fn (get parameters :needs-fn random-needs)]
-   (with-entity {:needs (needs-fn)})))
+   (alter-entity {:needs (needs-fn)})))
 
 ;;Sets the entity's upper bound on waiting
 (befn reset-wait-time {:keys [entity] :as benv}
-      (with-entity {:wait-time +default-wait-time+}))
+      (alter-entity {:wait-time +default-wait-time+}))
 
 ;;If the entity has needs, derives a set of needs based on
 ;;services.  This is a simple projection of the needs the
@@ -261,31 +278,67 @@
 (befn compute-services {:keys [ctx entity] :as benv}
   (when-let [needs (:needs @entity)]
     (let [proposed-services (needs->services needs (:service-network @ctx))]
-      (with-entity {:needs nil
-                    :services proposed-services}))))
-
-
+      (alter-entity {:needs nil
+                     :services proposed-services}))))
 
 ;;find the next service we'd like to try to acquire.
 ;;Eventually, we'll go by priority.  For now, we'll
 ;;just select the next service that happens to be on our
 ;;chain of services...
-(befn next-available-service
-      {:keys [entity] :as benv}
+(befn next-available-service {:keys [entity] :as benv}
+      nil
       )
 
-(comment
+;#_(def screenining (->and [(get-service "screening") 
+(defn set-service [nm]
+  (alter-entity {:active-service nm}))  
+
 ;;enter/spawn behavior
 (def enter
-  (->and [compute-needs
-          reset-wait-time]))
+  (->seq [reset-wait-time
+          compute-needs
+          (set-service "screening")]))
+
+(defn set-active-service [svc]
+  (->alter benv assoc :active-service svc))
+
+;;Prepare the entity's service plan based off of its needs.
+;;If it already has one, we're done.
+(befn get-service-plan {:keys [entity ctx] :as benv}
+  (let [ent  @entity]
+    (if (:service-plan ent)
+      (echo (str (:name ent) " has a service plan"))
+      (let [_    (debug "computing service plan for "
+                        (select-keys ent [:name :needs]))
+            net  (store/gete ctx :parameters :service-network)
+            plan (service-plan (:needs ent) net)]
+        (->do (fn [_] (swap! entity assoc :service-plan plan)))))))
+
+;;given the services the entity is interested, try to find the next
+;;available service, and setup a move to go to the service.
+;;If no service is available, we should default to waiting
+;;in the waiting area.  If there's no room to wait in the
+;;waiting area, we'll leave.  A failure to se
+(befn set-next-available-service {:keys [entity ctx] :as benv}
+      )
 
 ;;find-services
 ;;  should we advertise all services we're interested in?
 ;;  or go by entity-priority?
-(def find-services
-  (->seq [(->if  has-needs? needs->services)
-          (->if  has-services? next-available-service)]))
+
+;;if we have an active service set that we're trying to
+;;get to, we already have a service in mind.
+;;If not, we need to consult our service plan.
+(befn find-service {:keys [entity] :as benv}
+      (if-let [active-service (:active-service @entity)]
+        (->seq [(echo (str "found active service:"  active-service))
+                (set-active-service active-service)])
+        (->seq [(echo "looking for services")
+                get-service-plan
+                set-next-available-service])))
+
+(comment
+
 
 ;;get-service
 (def get-service
@@ -328,13 +381,14 @@
    interarrival time is non-zero.  Zero-values 
    are aggregated into the batch via incrementing
    n, accounting for concurrent arrivals (i.e. batches)."
-  [t f]
-  (loop [dt (f)
-         acc 1]
-    (if (pos? dt)
-      {:n acc :t (+ dt t)} 
-      (recur (f) (inc acc)))))
-
+  ([t f]
+   (loop [dt (f)
+          acc 1]
+     (if (pos? dt)
+       {:n acc :t (+ dt t)} 
+       (recur (f) (inc acc)))))
+  ([t f b] (assoc (next-batch t f) :behavior b)))
+  
 (defn batch->entities [{:keys [n t behavior] :as batch :or {behavior echo}}]
   (for [idx (range n)]
     (let [nm (str t "_" idx)]
@@ -371,9 +425,11 @@
    message."
   [update-type ctx]
   (let [t (sim/current-time ctx)]
-    (->> (sim/get-updates update-type t)
+    (->> (sim/get-updates update-type t ctx)
          (keys)
-         (reduce (fn [acc e] (send!! e :update t acc)) ctx))))
+         (reduce (fn [acc e]
+                   (println [:updating e])
+                   (send!! (store/get-entity acc e) :update t acc)) ctx))))
 
 ;;Simulation Systems
 ;;==================
@@ -384,12 +440,13 @@
 (defn init
   "Creates an initial context with a fresh distribution, schedules initial
    batch of arrivals too."
-  ([ctx]
+  ([ctx & {:keys [default-behavior] :or {default-behavior enter}}]
    (let [dist        (stats/exponential-dist 5)
          f           (fn interarrival [] (long (dist)))]
      (->>  ctx
-           (sim/merge-entity  {:arrival {:arrival-fn f}})
-           (schedule-arrivals (next-batch (sim/get-time ctx) f)))))
+           (sim/merge-entity  {:arrival {:arrival-fn f}
+                               :parameters {:default-behavior default-behavior}})
+           (schedule-arrivals (next-batch (sim/get-time ctx) f default-behavior)))))
   ([] (init emptysim)))
 
 ;;A) compute next arrivals.
@@ -424,7 +481,8 @@
            arr    (store/get-entity ctx :arrival) ;;known entity arrivals...
            {:keys [pending arrival-fn]}    arr
            new-entities (batch->entities pending)
-           new-batch    (next-batch (:t pending) arrival-fn)]
+           new-batch    (next-batch (:t pending) arrival-fn
+                                    (store/gete ctx :parameters :default-behavior))]
        (->> ctx
             (handle-arrivals (:t pending) new-entities)
             (schedule-arrivals new-batch)))
@@ -466,7 +524,10 @@
 
  (def isim   (init))
  (def isim1  (sim/advance-time isim ))
+ ;;arrivals happen
  (def isim1a (process-arrivals isim1))
  (sim/get-updates :client (sim/get-time isim1a) isim1a)
+ (binding [spork.ai.core/*debug* true] (def res (update-clients isim1a)))
+; (def asim (sim/advance-time isim1a))
 
   )
