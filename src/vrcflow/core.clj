@@ -294,13 +294,18 @@
   (alter-entity {:active-service nm}))  
 
 ;;enter/spawn behavior
-(def enter
-  (->seq [reset-wait-time
-          compute-needs
-          (set-service "screening")]))
+(befn enter {:keys [entity] :as benv}
+  (when (:spawning? @entity)
+    (->seq [reset-wait-time
+            (->do (fn [_]
+                    (swap! entity merge {:spawning? nil
+                                         :needs #{"Self Assessment"}})))])))
+
+(befn wait {:keys [entity] :as benv}
+      (echo "waiting....") )
 
 (defn set-active-service [svc]
-  (->alter benv assoc :active-service svc))
+  (->alter #(assoc % :active-service svc)))
 
 ;;Prepare the entity's service plan based off of its needs.
 ;;If it already has one, we're done.
@@ -308,19 +313,30 @@
   (let [ent  @entity]
     (if (:service-plan ent)
       (echo (str (:name ent) " has a service plan"))
-      (let [_    (debug "computing service plan for "
-                        (select-keys ent [:name :needs]))
-            net  (store/gete ctx :parameters :service-network)
-            plan (service-plan (:needs ent) net)]
+      (let [_    (debug (str "computing service plan for "
+                             (select-keys ent [:name :needs])))
+            net  (store/gete @ctx :parameters :service-network)
+            plan (service-plan (:needs ent) net)
+            _    (debug (str (:name ent) " wants to follow " plan))]
         (->do (fn [_] (swap! entity assoc :service-plan plan)))))))
 
-;;given the services the entity is interested, try to find the next
-;;available service, and setup a move to go to the service.
-;;If no service is available, we should default to waiting
-;;in the waiting area.  If there's no room to wait in the
-;;waiting area, we'll leave.  A failure to se
-(befn set-next-available-service {:keys [entity ctx] :as benv}
-      )
+;;Entities going through screening are able to compute their needs
+;;and develop a service plan.
+(befn screening {:keys [ctx] :as benv}
+      (->seq [(set-service "screening")
+              compute-needs
+              get-service-plan
+              wait]))
+
+;;Register the entity's interest and time-of-entry.
+;; (befn request-service {:keys [entity ctx] :as benv}
+;;       ;;entity now has a service plan, and advertises
+;;       ;;interest (along with time-in) for each service.
+;;       ;;This establishes entity's place in multiple queues.
+;;       (let [ent  @entity
+;;             plan (:service-plan ent)]
+;;         (->do #(swap! ctx store/updatee :service-requests 
+;;                       )
 
 ;;find-services
 ;;  should we advertise all services we're interested in?
@@ -331,11 +347,16 @@
 ;;If not, we need to consult our service plan.
 (befn find-service {:keys [entity] :as benv}
       (if-let [active-service (:active-service @entity)]
-        (->seq [(echo (str "found active service:"  active-service))
+        (->seq [(echo (str "found active service: "  active-service))
                 (set-active-service active-service)])
         (->seq [(echo "looking for services")
                 get-service-plan
-                set-next-available-service])))
+                #_set-next-available-service])))
+
+(def client-beh
+  (->seq [(echo "client-updating")
+          enter
+          find-service]))
 
 (comment
 
@@ -392,8 +413,10 @@
 (defn batch->entities [{:keys [n t behavior] :as batch :or {behavior echo}}]
   (for [idx (range n)]
     (let [nm (str t "_" idx)]
-      (assoc (client nm :arrival t)
-             :behavior behavior))))
+      (merge (client nm :arrival t)
+             {:behavior behavior
+              :spawning? true}
+             ))))
 
 ;;Note: we can handle arrivals a couple of different ways.
 ;;The way I'm going here is to have a central entity that
@@ -440,12 +463,15 @@
 (defn init
   "Creates an initial context with a fresh distribution, schedules initial
    batch of arrivals too."
-  ([ctx & {:keys [default-behavior] :or {default-behavior enter}}]
+  ([ctx & {:keys [default-behavior service-network]
+           :or {default-behavior client-beh
+                service-network basic-network}}]
    (let [dist        (stats/exponential-dist 5)
          f           (fn interarrival [] (long (dist)))]
      (->>  ctx
            (sim/merge-entity  {:arrival {:arrival-fn f}
-                               :parameters {:default-behavior default-behavior}})
+                               :parameters {:default-behavior default-behavior
+                                            :service-network  service-network}})
            (schedule-arrivals (next-batch (sim/get-time ctx) f default-behavior)))))
   ([] (init emptysim)))
 
