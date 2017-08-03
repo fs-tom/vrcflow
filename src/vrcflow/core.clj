@@ -275,7 +275,7 @@
 ;;services.  This is a simple projection of the needs the
 ;;entity presents with to the services associated with said
 ;;need per the input data and the service-network.
-(befn compute-services {:keys [ctx entity] :as benv}
+#_(befn compute-services {:keys [ctx entity] :as benv}
   (when-let [needs (:needs @entity)]
     (let [proposed-services (needs->services needs (:service-network @ctx))]
       (alter-entity {:needs nil
@@ -301,8 +301,8 @@
                     (swap! entity merge {:spawning? nil
                                          :needs #{"Self Assessment"}})))])))
 
-(befn wait {:keys [entity] :as benv}
-      (echo "waiting....") )
+(befn wait {:keys [entity] :as benv}      
+      (echo "waiting...."))
 
 (defn set-active-service [svc]
   (->alter #(assoc % :active-service svc)))
