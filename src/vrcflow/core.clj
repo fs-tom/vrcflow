@@ -45,6 +45,10 @@
                      ] :as b]
    [spork.cljgraph.core :as graph]
    ))
+
+(set! *print-level* 5)
+(set! *print-length* 100)
+
 ;;Generic client processing algorithm.
 
 ;;Assuming a have a client entity, with a
@@ -73,6 +77,10 @@
     :capacity capacity
     :clients  []
     :provider-entity true]})
+
+(defn clients   [db] (store/select-entities db :from :client-entity))
+(defn service-plans [db] (map (juxt :name :service-plan) (clients db)))
+(defn providers [db] (store/select-entities db :from :provider-entity))
 
 ;;So, service-providers can serve up to capacity clients....
 ;;When a client is undergoing a service, it consumes
@@ -321,9 +329,10 @@
   (alter-entity {:active-service nm}))  
 
 ;;enter/spawn behavior
-(befn enter {:keys [entity] :as benv}
+(befn enter {:keys [entity ctx] :as benv}
   (when (:spawning? @entity)
     (->seq [reset-wait-time
+            (echo (str [:client-arrived (:name @entity) :at (core/get-time @ctx)]))
             (->do (fn [_]
                     (swap! entity merge {:spawning? nil
                                          :needs #{"Self Assessment"}})))])))
@@ -369,6 +378,26 @@
 ;;  should we advertise all services we're interested in?
 ;;  or go by entity-priority?
 
+(defn get-in-line [db id svcs]
+  (let [waiting (store/get-entity db :waiting-list)]
+    (->> svcs
+         (reduce (fn [acc svc]
+                   (let [line (get acc svc [])]
+                     (assoc acc svc (conj line id))))
+                 waiting)
+         (store/mergee db :waiting-list))))
+
+(befn request-next-available-service {:keys [entity ctx] :as benv}
+      (let [ent @entity
+            plan (:service-plan ent)
+            svcs  (keys plan)]
+      (when (seq plan) ;;entity has services...
+        (debug [(:name ent) :requesting-services svcs])
+        (->alter (fn [benv]
+                   (do
+                      (swap! ctx get-in-line (:name ent) svcs)
+                       benv))))))
+
 ;;if we have an active service set that we're trying to
 ;;get to, we already have a service in mind.
 ;;If not, we need to consult our service plan.
@@ -378,7 +407,7 @@
                 (set-active-service active-service)])
         (->seq [(echo "looking for services")
                 get-service-plan
-                #_set-next-available-service])))
+                request-next-available-service])))
 
 (def client-beh
   (->seq [(echo "client-updating")
@@ -494,7 +523,7 @@
 (defn init
   "Creates an initial context with a fresh distribution, schedules initial
    batch of arrivals too."
-  ([ctx & {:keys [default-behavior service-network]
+  ([ctx & {:keys [default-behavior service-network initial-arrivals]
            :or {default-behavior client-beh
                 service-network basic-network}}]
    (let [dist        (stats/exponential-dist 5)
@@ -503,7 +532,8 @@
            (sim/merge-entity  {:arrival {:arrival-fn f}
                                :parameters {:default-behavior default-behavior
                                             :service-network  service-network}})
-           (schedule-arrivals (next-batch (sim/get-time ctx) f default-behavior))
+           (schedule-arrivals (or initial-arrivals
+                                  (next-batch (sim/get-time ctx) f default-behavior)))
            (register-providers service-network)
            )))
   ([] (init emptysim)))
@@ -536,7 +566,7 @@
    {:t long :n long} -> [entity*]"
   ([batch->entities ctx]
    (if-let [arrivals? (seq (sim/get-updates :arrival (sim/current-time ctx) ctx))]
-     (let [_      (spork.ai.core/debug "[<<<<<<Processing Arrivals!>>>>>>]")
+     (let [_      (debug "[<<<<<<Processing Arrivals!>>>>>>]")
            arr    (store/get-entity ctx :arrival) ;;known entity arrivals...
            {:keys [pending arrival-fn]}    arr
            new-entities (batch->entities pending)
@@ -549,24 +579,107 @@
          ctx)))
   ([ctx] (process-arrivals batch->entities ctx)))
 
+(defn current-capacity [ctx provider]
+  (let [e (store/get-entity ctx provider)]
+    (- (:capacity e) (count (:clients e)))))
+
+(defn available-service [svc ctx]
+  (when-let [providers (service->providers svc
+                                           (store/gete ctx :parameters :service-network))]
+    (->> providers         
+         (map (juxt identity #(current-capacity ctx %)))
+         (filter (comp pos? second)))))
+
+(defn fill-to
+  "Given an amount of fill and multiple pairs of 
+   [service capacity], will return a sequence of 
+   [service amount-filled fill-remaining], 
+   until fill-remaining is 0 or xs is exhausted."
+  [n xs]
+  (when-let [x (first xs)]
+    (let [[nm c] x]
+      (if (<= n c)
+        (let [remaining (- c n)
+              removed   (- c remaining)]
+          [[nm removed 0]])
+        (lazy-seq
+         (cons [nm c (- n c)]
+               (fill-to (- n c) (rest xs))))))))
+
+(defn pop-waiting-list [ctx svc wl n]
+  (if (== n (count wl))
+      (store/dissoce ctx :waiting-list svc)
+      (store/assoce ctx :waiting-list svc
+         (into [] (subvec wl n)))))
+
+(defn allocate-provider
+  "Allocate the entity to the provider's service,"
+  [ctx provider svc id]
+  (debug [:assigning id :to svc])
+  (->> (store/assoce ctx id :moving-to-service svc)
+       (sim/trigger-event :acquired-service id provider
+        (core/msg "Entity " id " being served for " svc " by " provider) nil)))
+  
+
+(defn assign-service [ctx svc ents provider-caps]
+  (let [ents   (vec ents)
+        deltas (fill-to (count ents) provider-caps)      
+        idx    (atom 0)
+        assign-ent (fn [ctx provider]
+                     (let [id (nth ents @idx)
+                           _  (reset! idx (inc @idx))]
+                           (allocate-provider ctx provider svc id)))]
+    (-> (reduce (fn blah [acc [svc n remaining]]
+                  #_(println n)
+                  (reduce assign-ent acc (range n)))
+                       ctx deltas)
+        (pop-waiting-list svc ents @idx))))
+
+;;if the entity is not in active service, it's eligible.
+;;ineligible entities will be pruned transitively (they
+;;may have acquired service in the mean-time...
+(defn service-eligible? [ctx e]
+  (not (store/gete e :active-service)))
+                 
+;;note: some entities may no longer care about services...
+;;Assume, for now, that the waiting list is up to date,
+;;i.e. occupied entities are pruned out...
+;;Note: at the most, we'll have 28 entities waiting...
+(defn fill-services
+  ([waiting ctx]
+   (reduce-kv (fn [acc svc ents]
+                (when-let [xs (available-service svc ctx)]                                                         
+                  (assign-service acc svc ents xs)))
+              ctx waiting))
+  ([ctx]
+   (fill-services (store/get-entity ctx :waiting-list) ctx)))
 
 ;;Update Clients [notify clients of the passage of time, leading to
 ;;clients leaving services, registering with new services, or preparing to leave.
 ;;We can just send update messages...
 (defn update-clients [ctx] (update-by :client ctx))
 
+(comment
 ;;Update Services [Services notify registered, non-waiting clients of availability,
 ;;                 clients move to services]
 ;;List newly-available services.
-(defn update-services  [ctx] (update-by :service ctx))
+(defn update-services  [ctx]
+    ;;see if we can fill our services...
+ )
+)
 
 ;;For newly-available services with clients waiting, allocate the next n clients
 ;;based on available capacity.
-(defn allocate-services [ctx] )
+(defn allocate-services [ctx]
+ (fill-services ctx)
+  )
 
 ;;Any entities with a :prepared-to-leave component are discharged from the system,
 ;;recording statistics along the way.
-(defn finalize-clients [ctx]  )
+(defn finalize-clients [ctx]
+  (debug "finalize-clients-stub")
+  ctx
+  )
 
 ;;Note: we "could" use dataflow dependencies, ala reagent, to establish a declarative
 ;;way of relating dependencies in the simulation.
@@ -578,15 +691,17 @@
 ;;priority right now.  Do they matter in practice?  Is there an actual
 ;;triage process?
 
-
 (comment  ;testing
+  (core/debugging!
+    (def isim   (init emptysim :initial-arrivals {:n 10 :t 1}))
+    (def isim1  (sim/advance-time isim ))
+    ;;arrivals happen
+    (def isim1a (process-arrivals isim1))
+    #_(sim/get-updates :client (sim/get-time isim1a) isim1a)
+    (def res   (update-clients isim1a))
+    (def fills (fill-services res))
 
- (def isim   (init))
- (def isim1  (sim/advance-time isim ))
- ;;arrivals happen
- (def isim1a (process-arrivals isim1))
- (sim/get-updates :client (sim/get-time isim1a) isim1a)
- (binding [spork.ai.core/*debug* true] (def res (update-clients isim1a)))
+      )
 ; (def asim (sim/advance-time isim1a))
 
   )
