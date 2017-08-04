@@ -5,9 +5,10 @@
    [vrcflow.data :as data]
    [spork.entitysystem.store :refer [defentity keyval->component] :as store]
    [spork.util [table   :as tbl] [stats :as stats]]
-   [spork.sim [simcontext     :as sim]]
-   [spork.ai           [behaviorcontext :as bctx] [messaging :refer [send!! handle-message! ->msg]]
-             [core :refer [debug]]]
+   [spork.sim  [core :as core] [simcontext :as sim]]
+   [spork.ai   [behaviorcontext :as bctx]
+               [messaging :refer [send!! handle-message! ->msg]]
+               [core :refer [debug]]]
    [spork.ai.behavior 
              :refer [beval
                      success?
@@ -59,17 +60,19 @@
     :arrival arrival
     :exit    exit
     :services []
+    :client-entity true
     ]})
 
 (defentity provider
   "Defines a storage container for service providers. Providers may store
    more than one client."
-  [id & {:keys [service capacity]}]
+  [id & {:keys [services capacity]}]
   {:components
    [:name     id
-    :service  service
+    :services  services
     :capacity capacity
-    :clients  []]})
+    :clients  []
+    :provider-entity true]})
 
 ;;So, service-providers can serve up to capacity clients....
 ;;When a client is undergoing a service, it consumes
@@ -170,6 +173,12 @@
 (defn service->providers [service service-net]
   (graph/sources service-net service))
 
+(defn capacities [service-net]
+  (into {}
+        (for [nd (vals (graph/nodes service-net))
+              :when (:Capacity nd)]
+          [(:Name nd) (:Capacity nd)])))
+
 (defn service-plan
   "A service plan consists of building a reduced map of 
    needs to services.  This provides a basis for addressing
@@ -184,14 +193,32 @@
                            svcs) needs-addressed))
             {} svcs->needs)))
 
+(defn service-tree [service-network]
+  (->> (keys (capacities basic-network))
+       (map #(into  [%] (graph/sinks basic-network %)))
+       (reduce (fn [acc [k svc]]
+                 (assoc acc k (conj (get acc k []) svc))) {})))
+          
+(defn service-network->provider-entities [service-network]
+  (let [tree (service-tree service-network)]
+    (for [nd (vals (graph/nodes service-network))
+          :when (:Capacity nd)]    
+      (provider (:Name nd)
+                :services (tree (:Name nd))
+                :capacity (:Capacity nd)))))
+
+(defn register-providers [service-network ctx]
+  (->> service-network
+       (service-network->provider-entities)
+       (store/add-entities ctx)))
+
 ;;potentially make this the default for empty contexts.
 ;;just enforce the idea that our entity state lives in
 ;;an entity store.
 (def emptysim
   "An empty simulation context with an initial start time, 
    and an empty entity store"
-  (->> (assoc sim/empty-context :state store/emptystore)
-       (sim/add-time 0)
+  (->> core/emptysim
        (sim/merge-entity
         {:parameters {:seed 5555
                       :wait-time 15}})))
@@ -454,6 +481,10 @@
                    (println [:updating e])
                    (send!! (store/get-entity acc e) :update t acc)) ctx))))
 
+;;Service operations
+;;==================
+(defn service-network->entities [sn])
+
 ;;Simulation Systems
 ;;==================
 ;;Since we're simulating using a stochastic process,
@@ -472,7 +503,9 @@
            (sim/merge-entity  {:arrival {:arrival-fn f}
                                :parameters {:default-behavior default-behavior
                                             :service-network  service-network}})
-           (schedule-arrivals (next-batch (sim/get-time ctx) f default-behavior)))))
+           (schedule-arrivals (next-batch (sim/get-time ctx) f default-behavior))
+           (register-providers service-network)
+           )))
   ([] (init emptysim)))
 
 ;;A) compute next arrivals.
