@@ -3,6 +3,13 @@
 ;;behavior tree approach defined by spork.ai.behavior .
 
 ;;cribbed from marathon.ces.behavior...
+;;Note: this behavior presumes the presence of a statedata
+;;components, as in spork.ai.machine.statedata .
+;;It's also predicated off the notion of a policy,
+;;where there are delineated wait-times to get between
+;;positions in the policy.  It's very much tied to the
+;;original notions I had for M4....
+
 (ns vrcflow.behavior
   (:require [spork.ai.core :as ai :refer
              [deref! fget fassoc  push-message- debug ->msg]]
@@ -1874,6 +1881,14 @@
                   (message-handler msg (val! acc)))
                 (success (assoc benv :current-messages nil))
                 current-messages)))
+
+(defn handle-messages-with [handler]
+  (befn handle-messages ^behaviorenv {:keys [entity current-messages ctx] :as benv}
+      (when current-messages
+        (reduce (fn [acc msg]                  
+                  (message-handler msg (val! acc)))
+                (success (assoc benv :current-messages nil))
+                current-messages))))
 
 ;;The global sequence of behaviors that we'll hit every update.
 ;;These are effectively shared behaviors across most updates.
