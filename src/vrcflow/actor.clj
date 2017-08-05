@@ -1,6 +1,6 @@
 ;;An implementation of a behavior tree that
 ;;responds to messages, ala the Actor model.
-(ns spork.ai.actor
+(ns vrcflow.actor
   (:require [spork.ai.core :as ai :refer
              [deref! fget fassoc  push-message- debug ->msg]]
             [spork.ai.behavior 
@@ -94,7 +94,7 @@
      (seq [this] (seq (into [] (r/mapcat identity colls) )))
      )))
 
-(defn pass 
+#_(defn pass 
   [msg ctx]  
   (->> (success ctx)
        (core/debug-print [:passing msg])))
@@ -207,7 +207,7 @@
                                                    defer-policy-change])
    })
 
-(def default-state-map {:waiting (echo :waiting-state)})
+#_(def default-state-map {:waiting (echo :waiting-state)})
 
 ;;the entity will see if a message has been sent
 ;;externally, and then compare this with its current internal
@@ -237,14 +237,14 @@
 
 ;;handle the current batch of messages that are pending for the
 ;;entity.  We currently define a default behavior.
-(befn handle-messages ^behaviorenv {:keys [entity current-messages ctx] :as benv}
+#_(befn handle-messages ^behaviorenv {:keys [entity current-messages ctx] :as benv}
       (when current-messages
         (reduce (fn [acc msg]                  
                   (message-handler msg (val! acc)))
                 (success (assoc benv :current-messages nil))
                 current-messages)))
 
-(defn handle-messages-with [handler]
+#_(defn handle-messages-with [handler]
   (befn handle-messages ^behaviorenv {:keys [entity current-messages ctx] :as benv}
       (when current-messages
         (reduce (fn [acc msg]                  
@@ -252,22 +252,16 @@
                 (success (assoc benv :current-messages nil))
                 current-messages))))
 
-(befn up-to-date {:keys [entity tupdate] :as benv}
+#_(befn up-to-date {:keys [entity tupdate] :as benv}
       (let [e (reset! entity (assoc @entity :last-update tupdate))]
         (echo [:up-to-date (:name e) :cycletime (:cycletime e) :last-update (:last-update e) :tupdate tupdate
                :positionpolicy (:positionpolicy e)])))
-
-(def process-messages-beh
-  (->or [(->and [(echo :check-messages)
-                         check-messages
-                         handle-messages])
-         (echo :no-messages)]))
 
 (defn up-to-date? [e ctx] (== (:tupdate e) (:tupdate ctx)))
 
 ;;This will become an API call...
 ;;instead of associng, we can invoke the protocol.
-(befn schedule-update  ^behaviorenv {:keys [entity ctx new-messages] :as benv}
+#_(befn schedule-update  ^behaviorenv {:keys [entity ctx new-messages] :as benv}
       (let [st       (deref! entity)
             nm       (:name st)
             duration (:wait-time st)
@@ -294,79 +288,83 @@
                    (success (assoc benv :current-messages nil))
                    current-messages))))))
 
-
+(defn process-messages-beh [handler]
+  (->or [(->and [(echo :check-messages)
+                 check-messages
+                 (->mailbox handle-messages)])
+         (echo :no-messages)]))
 
 
 ;;OBE for now...
 ;;==============
 
-;;The global sequence of behaviors that we'll hit every update.
-;;These are effectively shared behaviors across most updates.
-#_(def global-state
-    (->seq [(echo :aging)
-            age-unit          
-            (echo :aged)
-            moving-beh]))
+;; ;;The global sequence of behaviors that we'll hit every update.
+;; ;;These are effectively shared behaviors across most updates.
+;; #_(def global-state
+;;     (->seq [(echo :aging)
+;;             age-unit          
+;;             (echo :aged)
+;;             moving-beh]))
 
-;;The root behavior for updating the entity.
-#_(def update-state-beh
-    (->seq [(echo :<update-state-beh>)
-         ; process-messages-beh
-          (->or [special-state
-                 (->seq [(echo :<do-current-state>)
-                         do-current-state
-                         (echo :global-state)
-                         (fn [ctx]
-                           (if-y 
-                            global-state
-                            (fail ctx)))])
-                 up-to-date])]))
+;; ;;The root behavior for updating the entity.
+;; #_(def update-state-beh
+;;     (->seq [(echo :<update-state-beh>)
+;;          ; process-messages-beh
+;;           (->or [special-state
+;;                  (->seq [(echo :<do-current-state>)
+;;                          do-current-state
+;;                          (echo :global-state)
+;;                          (fn [ctx]
+;;                            (if-y 
+;;                             global-state
+;;                             (fail ctx)))])
+;;                  up-to-date])]))
 
-;;if we have a message, and the message indicates
-;;a time delta, we should wait the amount of time
-;;the delta indicates.  Waiting induces a change in the
-;;remaining wait time, as well as a chang
-#_(befn wait-in-state ^behaviorenv [entity current-message ctx]
-  (let [;_ (println [:wait-in-state entity msg])
-        msg    current-message
-        t     (fget msg :t)
-        delta (- t (fget (deref! entity) :t))]
-    (when-let [duration (fget  (deref! entity) :wait-time)]
-      (if (<= delta duration) ;time remains or is zero.
-         ;(println [:entity-waited duration :remaining (- duration delta)])
-        (merge!!  entity {:wait-time (- duration delta)
-                          :tupdate t}) ;;update the time.
-        (do ;can't wait out entire time in this state.
-          (merge!! entity {:wait-time 0
-                           :tupdate (- t duration)}) ;;still not up-to-date
-           ;;have we handled the message?
-           ;;what if time remains? this is akin to roll-over behavior.
-           ;;we'll register that time is left over. We can determine what
-           ;;to do in the next evaluation.  For now, we defer it.
-          (bind!! {:current-message (.assoc ^clojure.lang.Associative msg :delta (- delta duration))}
-                 )
-          )))))
+;; ;;if we have a message, and the message indicates
+;; ;;a time delta, we should wait the amount of time
+;; ;;the delta indicates.  Waiting induces a change in the
+;; ;;remaining wait time, as well as a chang
+;; #_(befn wait-in-state ^behaviorenv [entity current-message ctx]
+;;   (let [;_ (println [:wait-in-state entity msg])
+;;         msg    current-message
+;;         t     (fget msg :t)
+;;         delta (- t (fget (deref! entity) :t))]
+;;     (when-let [duration (fget  (deref! entity) :wait-time)]
+;;       (if (<= delta duration) ;time remains or is zero.
+;;          ;(println [:entity-waited duration :remaining (- duration delta)])
+;;         (merge!!  entity {:wait-time (- duration delta)
+;;                           :tupdate t}) ;;update the time.
+;;         (do ;can't wait out entire time in this state.
+;;           (merge!! entity {:wait-time 0
+;;                            :tupdate (- t duration)}) ;;still not up-to-date
+;;            ;;have we handled the message?
+;;            ;;what if time remains? this is akin to roll-over behavior.
+;;            ;;we'll register that time is left over. We can determine what
+;;            ;;to do in the next evaluation.  For now, we defer it.
+;;           (bind!! {:current-message (.assoc ^clojure.lang.Associative msg :delta (- delta duration))}
+;;                  )
+;;           )))))
 
 
 
-;;this is a dumb static message handler.
-;;It's a simple little interpreter that
-;;dispatches based on the message information.
-;;Should result in something that's beval compatible.
-;;we can probably override this easily enough.
-;;#Optimize:  We're bottlnecking here, creating lots of
-;;maps....
+;; ;;this is a dumb static message handler.
+;; ;;It's a simple little interpreter that
+;; ;;dispatches based on the message information.
+;; ;;Should result in something that's beval compatible.
+;; ;;we can probably override this easily enough.
+;; ;;#Optimize:  We're bottlnecking here, creating lots of
+;; ;;maps....
 
-;;Where does this live?
-;;From an OOP perspective, every actor has a mailbox and a message handler.
-;;
+;; ;;Where does this live?
+;; ;;From an OOP perspective, every actor has a mailbox and a message handler.
+;; ;;
 
-;;so now we can handle changing state and friends.
-;;we can define a response-map, ala compojure and friends.
+;; ;;so now we can handle changing state and friends.
+;; ;;we can define a response-map, ala compojure and friends.
 (defn ->handler [key->beh & {:keys [msg->key default]
                              :or {msg->key :msg
-                                  default (b/always-fail}}}]
-  (fn handler [benv]
+                                  default b/always-fail}}]
+  (fn handler [msg ^behaviorenv benv]
     (let [entity           (.entity benv)
           current-messages (.current-messages benv)
           ctx              (.ctx benv)
@@ -374,79 +372,79 @@
       (let [b (or (key->beh (msg->key msg)) default)]
         (beval b benv)))))
           
-(def echo-handler  (->handler {} :default echo))
-(def default-handler
-  (->handler     ;;allow the entity to change its behavior.
-         {:become (push! entity :behavior (:data msg))
-          :do     (->do (:data msg))
-          :echo   (->do  (fn [_] (println (:data msg))))
-          (do ;(println (str [:ignoring :unknown-message-type (:msg msg) :in  msg]))
-            (sim/trigger-event msg @ctx) ;toss it over the fence
-                                        ;(throw (Exception. (str [:unknown-message-type (:msg msg) :in  msg])))
-            (success benv)
-            )}))
+;; #_(def echo-handler  (->handler {} :default echo))
+;; #_(def default-handler
+;;   (->handler     ;;allow the entity to change its behavior.
+;;          {:become (push! entity :behavior (:data msg))
+;;           :do     (->do (:data msg))
+;;           :echo   (->do  (fn [_] (println (:data msg))))
+;;           (do ;(println (str [:ignoring :unknown-message-type (:msg msg) :in  msg]))
+;;             (sim/trigger-event msg @ctx) ;toss it over the fence
+;;                                         ;(throw (Exception. (str [:unknown-message-type (:msg msg) :in  msg])))
+;;             (success benv)
+;;             )}))
 
-;;type sig:: msg -> benv/Associative -> benv/Associative
-;;this gets called a lot.
-#_(defn message-handler [msg ^behaviorenv benv]
-  (let [entity           (.entity benv)
-        current-messages (.current-messages benv)
-        ctx              (.ctx benv)]
-    (do (ai/debug (str [(:name (deref! entity)) :handling msg]))
-      (beval 
-       (case (:msg msg)
-         :move
-         (let [move-info (:data msg)
-               {:keys [wait-time next-location next-position deltat] :or
-                {wait-time 0 deltat 0}} move-info
-               _ (debug [:executing-move move-info  msg (:positionpolicy @entity)])]
-           (beval (move! next-location deltat next-position wait-time) benv))
-         ;;allow the entity to invoke a state-change-behavior
-         ;;We can always vary this by modifying the message-handler         
-         :change-state           
-         ;;generic update function.  Temporally dependent.
-         ;;we're already stepping the entity. Can we just invoke the change-state behavior?
-         (let [state-change (:data msg)
-               _            (debug [:state-change-message state-change msg])]
-           (beval change-state-beh (assoc benv :state-change state-change
-                                               :next-position (or (:next-position state-change)
-                                                                  (:newstate state-change)))))
-         :change-policy
-         ;;Note: this is allowing us to change policy bypassing our wait state...
-         ;;We need to put a break in here to defer policy changes.
-         ;;Policy-changes are handled by updating the unit, then
-         ;;executing the  change-policy behavior.
-         ;;Note: we could tie in change-policy at a lower echelon....so we check for
-         ;;policy changes after updates.
-         (beval policy-change-state (assoc benv :policy-change (:data msg)))
+;; ;;type sig:: msg -> benv/Associative -> benv/Associative
+;; ;;this gets called a lot.
+;; #_(defn message-handler [msg ^behaviorenv benv]
+;;   (let [entity           (.entity benv)
+;;         current-messages (.current-messages benv)
+;;         ctx              (.ctx benv)]
+;;     (do (ai/debug (str [(:name (deref! entity)) :handling msg]))
+;;       (beval 
+;;        (case (:msg msg)
+;;          :move
+;;          (let [move-info (:data msg)
+;;                {:keys [wait-time next-location next-position deltat] :or
+;;                 {wait-time 0 deltat 0}} move-info
+;;                _ (debug [:executing-move move-info  msg (:positionpolicy @entity)])]
+;;            (beval (move! next-location deltat next-position wait-time) benv))
+;;          ;;allow the entity to invoke a state-change-behavior
+;;          ;;We can always vary this by modifying the message-handler         
+;;          :change-state           
+;;          ;;generic update function.  Temporally dependent.
+;;          ;;we're already stepping the entity. Can we just invoke the change-state behavior?
+;;          (let [state-change (:data msg)
+;;                _            (debug [:state-change-message state-change msg])]
+;;            (beval change-state-beh (assoc benv :state-change state-change
+;;                                                :next-position (or (:next-position state-change)
+;;                                                                   (:newstate state-change)))))
+;;          :change-policy
+;;          ;;Note: this is allowing us to change policy bypassing our wait state...
+;;          ;;We need to put a break in here to defer policy changes.
+;;          ;;Policy-changes are handled by updating the unit, then
+;;          ;;executing the  change-policy behavior.
+;;          ;;Note: we could tie in change-policy at a lower echelon....so we check for
+;;          ;;policy changes after updates.
+;;          (beval policy-change-state (assoc benv :policy-change (:data msg)))
          
-         :update (if (== (get (deref! entity) :last-update -1) (.tupdate benv))
-                   (success benv) ;entity is current
-                   (->and [(echo :update)
-                                        ;roll-forward-beh ;;See if we can replace this with update-state...
-                           update-state-beh                           
-                           ]))
-         :spawn  (->and [(echo :spawn)
-                         (push! entity :state :spawning)
-                         spawning-beh]
-                        )
-         ;;Allow the entity to apply location-based information to its movement, specifically
-         ;;altering behavior due to demands.
-         :location-based-move         
-         (beval location-based-beh 
-                (assoc benv  :location-based-info (:data msg)))
-         ;;Like a location-based move, except with a simple wait time guarantee, with a
-         ;;reversion to the original state upon completion of the wait.
-         :wait-based-move
-         (beval wait-based-beh
-                (assoc benv  :wait-based-info (:data msg)))
-         ;;allow the entity to change its behavior.
-         :become (push! entity :behavior (:data msg))
-         :do     (->do (:data msg))
-         :echo   (->do  (fn [_] (println (:data msg))))
-         (do ;(println (str [:ignoring :unknown-message-type (:msg msg) :in  msg]))
-           (sim/trigger-event msg @ctx) ;toss it over the fence
-                                        ;(throw (Exception. (str [:unknown-message-type (:msg msg) :in  msg])))
-           (success benv)
-           ))
-       benv))))
+;;          :update (if (== (get (deref! entity) :last-update -1) (.tupdate benv))
+;;                    (success benv) ;entity is current
+;;                    (->and [(echo :update)
+;;                                         ;roll-forward-beh ;;See if we can replace this with update-state...
+;;                            update-state-beh                           
+;;                            ]))
+;;          :spawn  (->and [(echo :spawn)
+;;                          (push! entity :state :spawning)
+;;                          spawning-beh]
+;;                         )
+;;          ;;Allow the entity to apply location-based information to its movement, specifically
+;;          ;;altering behavior due to demands.
+;;          :location-based-move         
+;;          (beval location-based-beh 
+;;                 (assoc benv  :location-based-info (:data msg)))
+;;          ;;Like a location-based move, except with a simple wait time guarantee, with a
+;;          ;;reversion to the original state upon completion of the wait.
+;;          :wait-based-move
+;;          (beval wait-based-beh
+;;                 (assoc benv  :wait-based-info (:data msg)))
+;;          ;;allow the entity to change its behavior.
+;;          :become (push! entity :behavior (:data msg))
+;;          :do     (->do (:data msg))
+;;          :echo   (->do  (fn [_] (println (:data msg))))
+;;          (do ;(println (str [:ignoring :unknown-message-type (:msg msg) :in  msg]))
+;;            (sim/trigger-event msg @ctx) ;toss it over the fence
+;;                                         ;(throw (Exception. (str [:unknown-message-type (:msg msg) :in  msg])))
+;;            (success benv)
+;;            ))
+;;        benv))))

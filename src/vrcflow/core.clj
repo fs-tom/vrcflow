@@ -2,7 +2,7 @@
 ;;finding and receiving services to meet needs.
 (ns vrcflow.core
   (:require
-   [vrcflow.data :as data]
+   [vrcflow [data :as data] [actor :as actor]]
    [spork.entitysystem.store :refer [defentity keyval->component] :as store]
    [spork.util [table   :as tbl] [stats :as stats]]
    [spork.sim  [core :as core] [simcontext :as sim]]
@@ -78,9 +78,15 @@
     :clients  []
     :provider-entity true]})
 
+(defn service-network [db] (store/gete db :parameters :service-network))
 (defn clients   [db] (store/select-entities db :from :client-entity))
 (defn service-plans [db] (map (juxt :name :service-plan) (clients db)))
 (defn providers [db] (store/select-entities db :from :provider-entity))
+(defn active-providers [db] (filter (comp seq :clients) (providers db)))
+(defn service-time [db provider svc]
+  (let [net (service-network db)]
+    (graph/arc-weight basic-network provider svc)))
+    
 
 ;;So, service-providers can serve up to capacity clients....
 ;;When a client is undergoing a service, it consumes
@@ -340,6 +346,12 @@
 (befn wait {:keys [entity] :as benv}      
       (echo "waiting...."))
 
+(defn wait-at [id provider wait-time ctx]
+  (send!! (store/get-entity ctx id)
+          :wait
+          {:location provider
+           :wait-time wait-time}))
+
 (defn set-active-service [svc]
   (->alter #(assoc % :active-service svc)))
 
@@ -409,10 +421,26 @@
                 get-service-plan
                 request-next-available-service])))
 
-(def client-beh
+
+(def client-update-beh
   (->seq [(echo "client-updating")
           enter
           find-service]))
+
+;; (def default-handler
+;;   (actor/->handler
+;;    {:update (fn [benv]
+;;               (if (== (get (deref! entity) :last-update -1) (.tupdate benv))
+;;                 (success benv) ;entity is current
+;;                 (->and [(echo :update)
+;;                         update-state-beh                           
+;;                         ])) 
+;;     :wait   
+    
+;;     }))
+(def client-beh 
+  (->seq [(actor/process-messages-beh default-handler)
+          client-update-beh]))
 
 (comment
 
@@ -466,13 +494,20 @@
        (recur (f) (inc acc)))))
   ([t f b] (assoc (next-batch t f) :behavior b)))
   
-(defn batch->entities [{:keys [n t behavior] :as batch :or {behavior echo}}]
+(defn batch->entities [{:keys [n t behavior] :as batch
+                        :or {behavior (always-fail "no-behavior!")}}]
   (for [idx (range n)]
     (let [nm (str t "_" idx)]
       (merge (client nm :arrival t)
              {:behavior behavior
               :spawning? true}
              ))))
+
+(defn ensure-behavior [ctx batch]
+  (if (:behavior batch)
+    batch
+    (assoc batch :behavior
+       (store/gete ctx :parameters :default-behavior))))
 
 ;;Note: we can handle arrivals a couple of different ways.
 ;;The way I'm going here is to have a central entity that
@@ -484,7 +519,9 @@
 (defn schedule-arrivals
   "Given a batch order, schedules new arrivals for ctx."
   [batch ctx]
-  (->> (store/assoce ctx :arrival :pending batch)
+  (->> batch
+       (ensure-behavior ctx)
+       (store/assoce ctx :arrival :pending)
        (sim/request-update (:t batch) :arrival :arrival)))
 
 (defn handle-arrivals
@@ -579,15 +616,14 @@
          ctx)))
   ([ctx] (process-arrivals batch->entities ctx)))
 
-(defn current-capacity [ctx provider]
-  (let [e (store/get-entity ctx provider)]
-    (- (:capacity e) (count (:clients e)))))
-
+(defn current-capacity [provider]
+  (- (:capacity provider) (count (:clients provider))))
+ 
 (defn available-service [svc ctx]
   (when-let [providers (service->providers svc
-                                           (store/gete ctx :parameters :service-network))]
+                          (store/gete ctx :parameters :service-network))]
     (->> providers         
-         (map (juxt identity #(current-capacity ctx %)))
+         (map (juxt identity #(current-capacity (store/get-entity ctx %))))
          (filter (comp pos? second)))))
 
 (defn fill-to
@@ -612,14 +648,24 @@
       (store/assoce ctx :waiting-list svc
          (into [] (subvec wl n)))))
 
+(defn add-client [provider id ctx]
+  (store/updatee ctx provider :clients conj id))
+
+
+;;when clients engage in a service, they end up waiting.
+
 (defn allocate-provider
   "Allocate the entity to the provider's service,"
   [ctx provider svc id]
-  (debug [:assigning id :to svc])
-  (->> (store/assoce ctx id :moving-to-service svc)
-       (sim/trigger-event :acquired-service id provider
-        (core/msg "Entity " id " being served for " svc " by " provider) nil)))
-  
+  (let [wait-time (service-time ctx provider svc)]
+    (debug [:assigning id :to svc :for wait-time])
+    (->> (store/assoce ctx id :active-service svc)
+         (add-client provider id)
+         (wait-at id provider wait-time)
+         (sim/trigger-event :acquired-service id provider
+           (core/msg "Entity " id " being served for "
+                     svc " by " provider) nil)
+         )))
 
 (defn assign-service [ctx svc ents provider-caps]
   (let [ents   (vec ents)
@@ -629,9 +675,9 @@
                      (let [id (nth ents @idx)
                            _  (reset! idx (inc @idx))]
                            (allocate-provider ctx provider svc id)))]
-    (-> (reduce (fn blah [acc [svc n remaining]]
+    (-> (reduce (fn blah [acc [provider n remaining]]
                   #_(println n)
-                  (reduce assign-ent acc (range n)))
+                  (reduce (fn [acc _] (assign-ent acc provider)) acc (range n)))
                        ctx deltas)
         (pop-waiting-list svc ents @idx))))
 
@@ -669,10 +715,10 @@
 )
 
 ;;For newly-available services with clients waiting, allocate the next n clients
-;;based on available capacity.
+;;based on available capacity.  Newly allocated client entities will have a
+;;:move-to-service 
 (defn allocate-services [ctx]
- (fill-services ctx)
-  )
+ (fill-services ctx))
 
 ;;Any entities with a :prepared-to-leave component are discharged from the system,
 ;;recording statistics along the way.
@@ -693,7 +739,8 @@
 
 (comment  ;testing
   (core/debugging!
-    (def isim   (init emptysim :initial-arrivals {:n 10 :t 1}))
+   (def isim   (init (core/debug! emptysim) :initial-arrivals {:n 10 :t 1}
+                     :default-behavior client-beh))
     (def isim1  (sim/advance-time isim ))
     ;;arrivals happen
     (def isim1a (process-arrivals isim1))
