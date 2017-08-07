@@ -271,7 +271,8 @@
   "For testing purposes, provides a vector of default needs 
    we can use for random needs generation, as a function of 
    the basic network."
-  (vec (indicators basic-network)))
+  (vec (filter (complement #{"Where Can I Wait?"})
+               (indicators basic-network))))
 
 ;;this is just a shim for generating needs.
 (defn random-needs
@@ -493,6 +494,26 @@
           age
           find-service]))
 
+(defn ->trigger [id from to msg-form data]
+  (fn [benv]
+    (let [ctx @(:ctx benv)
+          _   (reset! (:ctx benv)
+                      (core/trigger-event id from to msg-form data ctx))]
+      (success benv))))
+
+(def leaving-beh
+  (->seq [(echo "leaving!")
+          (->do (fn [benv]
+                  (let [ent @(:entity benv)]
+                    (swap! (:ctx benv)
+                           #(core/trigger-event :leaving 
+                             (:name ent) 
+                             :anyone
+                             (str (:name ent) :left)
+                             nil
+                             %)))))]
+         ))
+
 ;;update behavior is governed by 
 (def default-handler
   (actor/->handler
@@ -502,7 +523,7 @@
     :wait   #(let [msg (:current-message %)
                    {:keys [location wait-time]} (:data msg)]
                (wait-beh location wait-time))
-    :leave  (echo "leaving!")}))
+    :leave  leaving-beh}))
 
 (def client-beh
   (actor/process-messages-beh default-handler)
@@ -754,7 +775,7 @@
   [ctx provider id]
   (debug [:removing id :from provider])
   (->> (drop-client provider id ctx)
-       (sim/trigger-event :acquired-service id provider
+       (sim/trigger-event :left-service id provider
          (core/msg "Entity " id " left " provider) nil)
        ))
 
@@ -883,12 +904,18 @@
 (defn begin-t [ctx]
   (do (debug (core/msg ">>>>>>>>>>>>>Beginning time "
                        (core/get-time ctx) "<<<<<<<<<<<<<<"))
-      ctx))
+      (core/trigger-event :begin-t :system :system
+         (core/msg ">>>>>>>>>>>>>Beginning time "
+                       (core/get-time ctx) "<<<<<<<<<<<<<<") nil ctx)))
 
 (defn end-t   [ctx]
   (do (debug (core/msg ">>>>>>>>>>>>>Ending time "
                        (core/get-time ctx) "<<<<<<<<<<<<<<"))
-      (sim/advance-time ctx)))
+      (->> ctx 
+      (core/trigger-event :begin-t :system :system
+         (core/msg ">>>>>>>>>>>>>Ending time "
+                       (core/get-time ctx) "<<<<<<<<<<<<<<") nil)
+      (sim/advance-time))))
 
 (defn step [ctx]
   (->> ctx
@@ -901,12 +928,13 @@
        (finalize-clients)
        (end-t)))
 
-
+(defn seed-ctx []
+  (end-t (init (core/debug! emptysim) :initial-arrivals {:n 10 :t 1}
+               :default-behavior client-beh)))
 (defn step-day
   ([seed]
    (take-while (fn [x] (< (core/get-time x) (* 60 8))) (iterate step seed)))
-  ([] (step-day (init (core/debug! emptysim) :initial-arrivals {:n 10 :t 1}
-                       :default-behavior client-beh))))
+  ([] (step-day  (seed-ctx))))
 ;;Notes // Pending:
 ;;Priority rules may be considered (we don't here).  It's first-come-first-serve
 ;;priority right now.  Do they matter in practice?  Is there an actual
