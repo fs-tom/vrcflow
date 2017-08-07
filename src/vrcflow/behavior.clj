@@ -1,15 +1,4 @@
-;;A namespace for defining and composing entity behaviors.
-;;We'll define core behaviors here, leveraging the
-;;behavior tree approach defined by spork.ai.behavior .
-
-;;cribbed from marathon.ces.behavior...
-;;Note: this behavior presumes the presence of a statedata
-;;components, as in spork.ai.machine.statedata .
-;;It's also predicated off the notion of a policy,
-;;where there are delineated wait-times to get between
-;;positions in the policy.  It's very much tied to the
-;;original notions I had for M4....
-
+;;We'll define our entity behaviors here...
 (ns vrcflow.behavior
   (:require [spork.ai.core :as ai :refer
              [deref! fget fassoc  push-message- debug ->msg]]

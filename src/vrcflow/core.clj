@@ -2,7 +2,7 @@
 ;;finding and receiving services to meet needs.
 (ns vrcflow.core
   (:require
-   [vrcflow [data :as data] [actor :as actor]]
+   [vrcflow [data :as data] [actor :as actor] #_[behavior :as beh]]
    [spork.entitysystem.store :refer [defentity keyval->component] :as store]
    [spork.util [table   :as tbl] [stats :as stats]]
    [spork.sim  [core :as core] [simcontext :as sim]]
@@ -343,14 +343,47 @@
                     (swap! entity merge {:spawning? nil
                                          :needs #{"Self Assessment"}})))])))
 
-(befn wait {:keys [entity] :as benv}      
-      (echo "waiting...."))
+
+#_(befn update-after  ^behaviorenv [entity wait-time tupdate ctx]
+   (when wait-time
+     (->alter
+      #(if (effectively-infinite? wait-time)
+         (do (debug [(:name @entity) :waiting :infinitely]) ;skip requesting update.             
+             (dissoc % :wait-time)
+             ) 
+         (let [tfut (+ tupdate (ensure-pos! wait-time))
+               e                       (:name @entity)
+               _    (debug [e :requesting-update :at tfut])]
+           (swap! ctx (fn [ctx] 
+                         (core/request-update tfut
+                                              e
+                                              :supply-update
+                                              ctx)))
+           (dissoc % :wait-time) ;remove the wait-time from further consideration...           
+           )))))
+
+(defn wait-beh [location wait-time]
+  (->and [(echo "waiting....")
+          (alter-entity {:location location
+                         :wait-time wait-time})
+          (->do (fn [{:keys [tupdate entity ctx] :as benv}]
+                  (let [tfut (+ tupdate wait-time)
+                        e                       (:name @entity)
+                        _    (debug [e :requesting-update :at tfut])]
+                    (swap! ctx (fn [ctx] 
+                                 (core/request-update tfut
+                                                      e
+                                                      :client
+                                                      ctx))))))
+          screening]
+         ))
+                   
 
 (defn wait-at [id provider wait-time ctx]
   (send!! (store/get-entity ctx id)
           :wait
           {:location provider
-           :wait-time wait-time}))
+           :wait-time wait-time} ctx))
 
 (defn set-active-service [svc]
   (->alter #(assoc % :active-service svc)))
@@ -370,11 +403,14 @@
 
 ;;Entities going through screening are able to compute their needs
 ;;and develop a service plan.
-(befn screening {:keys [ctx] :as benv}
-      (->seq [(set-service "screening")
-              compute-needs
-              get-service-plan
-              wait]))
+(befn screening {:keys [entity ctx] :as benv}
+      (if (= (:active-service @entity) "Screening")
+        (->seq [(echo "screening")
+                compute-needs
+                (alter-entity {:service-plan nil})
+                get-service-plan
+                ])
+        (success benv)))
 
 ;;Register the entity's interest and time-of-entry.
 ;; (befn request-service {:keys [entity ctx] :as benv}
@@ -401,45 +437,76 @@
 
 (befn request-next-available-service {:keys [entity ctx] :as benv}
       (let [ent @entity
-            plan (:service-plan ent)
+            plan  (:service-plan ent)
             svcs  (keys plan)]
       (when (seq plan) ;;entity has services...
         (debug [(:name ent) :requesting-services svcs])
         (->alter (fn [benv]
                    (do
                       (swap! ctx get-in-line (:name ent) svcs)
-                       benv))))))
+                      benv))))))
+
+(befn age {:keys [tupdate entity] :as benv}
+ (let [ent @entity
+       wt  (:wait-time ent)
+       tprev (or (:last-update ent) tupdate)
+       dt (- tupdate tprev)]
+   (if (pos? dt)
+     (do (debug (str "aging entity " dt))
+         (alter-entity
+          {:wait-time (- wt (- tupdate tprev))}))
+     (success benv))))
+
+(declare deallocate-provider)
+(befn finish-service {:keys [ctx entity] :as benv}
+ (let [ent @entity
+       active-service (:active-service ent)]
+   (->seq [(echo (str "Entity finished service" active-service))
+           (alter-entity {:active-service nil
+                          :location nil})
+           (->do (fn [_]
+                   (swap! ctx
+                          deallocate-provider
+                          (:location ent) ;provider
+                          (:name ent))))])))
 
 ;;if we have an active service set that we're trying to
 ;;get to, we already have a service in mind.
 ;;If not, we need to consult our service plan.
-(befn find-service {:keys [entity] :as benv}
+(befn find-service {:keys [tupdate entity] :as benv}
       (if-let [active-service (:active-service @entity)]
-        (->seq [(echo (str "found active service: "  active-service))
-                (set-active-service active-service)])
+        (let [ent @entity
+              wt (:wait-time ent)]
+          (if (zero? wt)
+            (->seq [finish-service
+                    get-service-plan
+                    request-next-available-service])
+            (echo "Still in service")))
+        
         (->seq [(echo "looking for services")
                 get-service-plan
                 request-next-available-service])))
 
-
 (def client-update-beh
   (->seq [(echo "client-updating")
           enter
+          age
           find-service]))
 
-;; (def default-handler
-;;   (actor/->handler
-;;    {:update (fn [benv]
-;;               (if (== (get (deref! entity) :last-update -1) (.tupdate benv))
-;;                 (success benv) ;entity is current
-;;                 (->and [(echo :update)
-;;                         update-state-beh                           
-;;                         ])) 
-;;     :wait   
-    
-;;     }))
-(def client-beh 
-  (->seq [(actor/process-messages-beh default-handler)
+;;update behavior is governed by 
+(def default-handler
+  (actor/->handler
+   {:update (->and [(echo :update)
+                    client-update-beh                           
+                    ]) 
+    :wait   #(let [msg (:current-message %)
+                   {:keys [location wait-time]} (:data msg)]
+               (wait-beh location wait-time))
+    :leave  (echo "leaving!")}))
+
+(def client-beh
+  (actor/process-messages-beh default-handler)
+  #_(->seq [
           client-update-beh]))
 
 (comment
@@ -524,6 +591,12 @@
        (store/assoce ctx :arrival :pending)
        (sim/request-update (:t batch) :arrival :arrival)))
 
+;;;temporary hack/shim...
+(defn add-updates [ctx xs]
+  (reduce (fn [acc [t from type]]
+            (sim/request-update t from type acc))
+          ctx xs))
+
 (defn handle-arrivals
   "Pulls out the next arrival batch from the :arrival entity, 
    consuming the update in the process."
@@ -531,7 +604,9 @@
   (-> ctx 
       (sim/drop-update :arrival t :arrival) ;eliminate current update.
       (store/add-entities new-entities) ;;add new entities.
-      (sim/add-updates             ;;request updates.
+      ;;TODO: fix add-updates in spork.sim.simcontext....we're getting transient
+      ;;problems!
+      (add-updates             ;;request updates.
        (for [e new-entities]
          [t (:name e) :client]
          )))) 
@@ -651,8 +726,15 @@
 (defn add-client [provider id ctx]
   (store/updatee ctx provider :clients conj id))
 
+(defn drop-client [provider id ctx]
+  (store/updatee ctx provider
+    :clients #(into [] (filter (fn [x] (not= x id))) %)))
 
 ;;when clients engage in a service, they end up waiting.
+(defn service->behavior [svc]
+  (case svc
+    "Screening" screening
+    wait))
 
 (defn allocate-provider
   "Allocate the entity to the provider's service,"
@@ -667,6 +749,20 @@
                      svc " by " provider) nil)
          )))
 
+(defn deallocate-provider
+  "Allocate the entity to the provider's service,"
+  [ctx provider id]
+  (debug [:removing id :from provider])
+  (->> (drop-client provider id ctx)
+       (sim/trigger-event :acquired-service id provider
+         (core/msg "Entity " id " left " provider) nil)
+       ))
+
+;;when a client is in waiting, we update the client...
+(defn waiting-service [ctx id]
+  (allocate-provider ctx "VRC Waiting Area" "Waiting" id))
+       
+;;Note: when we assign entities
 (defn assign-service [ctx svc ents provider-caps]
   (let [ents   (vec ents)
         deltas (fill-to (count ents) provider-caps)      
@@ -694,11 +790,26 @@
 (defn fill-services
   ([waiting ctx]
    (reduce-kv (fn [acc svc ents]
-                (when-let [xs (available-service svc ctx)]                                                         
+                (when-let [xs (available-service svc ctx)] 
                   (assign-service acc svc ents xs)))
               ctx waiting))
   ([ctx]
    (fill-services (store/get-entity ctx :waiting-list) ctx)))
+
+(defn not-allocated
+  "Return a sequence of entities that have no active-service 
+   allocated."
+  [ctx]
+  (->> (store/select-entities ctx :from :active-service)
+       (filter (comp not :active-service) )
+       (map :name)))
+
+(defn wait-capacity
+  "Returns the amount of spaces we have for folks to sit and wait.."
+  [ctx]
+  (current-capacity
+   (store/get-entity fills "VRC Waiting Area")))
+
 
 ;;Update Clients [notify clients of the passage of time, leading to
 ;;clients leaving services, registering with new services, or preparing to leave.
@@ -716,21 +827,55 @@
 
 ;;For newly-available services with clients waiting, allocate the next n clients
 ;;based on available capacity.  Newly allocated client entities will have a
-;;:move-to-service 
+;;:move-to-service;  Clients unable to allocate, will be allocted to
+;;wait (with a wait-time of up to +wait-time+).
 (defn allocate-services [ctx]
- (fill-services ctx))
+  (->> ctx
+       (fill-services)
+       (allocate-waits)))
 
-;;Any entities with a :prepared-to-leave component are discharged from the system,
-;;recording statistics along the way.
+(defn allocate-waits [ctx]
+  (if-let [ids (seq (not-allocated ctx))]
+    (->> ids
+         (take (wait-capacity ctx))
+         ;;try to get the unallocated entities to wait in the waiting area.
+         (reduce waiting-service ctx))
+    ctx))
+
+;;Any entities unallocated entities are discharged, because by this point,
+;;they should have been able to leave.
 (defn finalize-clients [ctx]
-  (debug "finalize-clients-stub")
-  ctx
-  )
-
+  (if-let [drops (seq (not-allocated ctx))]
+    (do (debug "dropping entities!")
+        (reduce (fn [acc id]
+                  (send!! (store/get-entity acc id)
+                          :leave nil))
+                ctx
+                drops))
+    (do (debug "no entities to drop!")
+        ctx)))
 ;;Note: we "could" use dataflow dependencies, ala reagent, to establish a declarative
 ;;way of relating dependencies in the simulation.
 
+(defn begin-t [ctx]
+  (do (debug (core/msg ">>>>>>>>>>>>>Beginning time "
+                       (core/get-time ctx) "<<<<<<<<<<<<<<"))
+      ctx))
 
+(defn end-t   [ctx]
+  (do (debug (core/msg ">>>>>>>>>>>>>Ending time "
+                       (core/get-time ctx) "<<<<<<<<<<<<<<"))
+      (sim/advance-time ctx)))
+
+(defn step [ctx]
+  (->> ctx
+       (begin-t)
+       (process-arrivals)
+       (update-clients)
+       (fill-services)
+       (allocate-waits)
+       (finalize-clients)
+       (end-t)))
 
 ;;Notes // Pending:
 ;;Priority rules may be considered (we don't here).  It's first-come-first-serve
@@ -741,14 +886,24 @@
   (core/debugging!
    (def isim   (init (core/debug! emptysim) :initial-arrivals {:n 10 :t 1}
                      :default-behavior client-beh))
-    (def isim1  (sim/advance-time isim ))
+    (def isim1  (-> isim (end-t) (begin-t))) #_(sim/advance-time isim)
     ;;arrivals happen
     (def isim1a (process-arrivals isim1))
     #_(sim/get-updates :client (sim/get-time isim1a) isim1a)
     (def res   (update-clients isim1a))
     (def fills (fill-services res))
+    (def wts   (allocate-waits fills))
+    (def fin   (finalize-clients wts))
+    (def e1    (end-t fin)))
 
-      )
+    (core/debugging!
+     (def isim   (init (core/debug! emptysim) :initial-arrivals {:n 10 :t 1}
+                       :default-behavior client-beh))
+     (def t1 (step (end-t isim)))
+     (def t2 (step t1))
+     (def t3 (step t2))
+     (def t4 (step t3))
+     )
 ; (def asim (sim/advance-time isim1a))
 
   )

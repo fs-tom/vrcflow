@@ -272,6 +272,8 @@
             ]        
         (success (push-message- benv nm nm (->msg nm nm tfut :update)))))
 
+;;look into using actor idioms..
+;;  receive, etc.
 (defn ->mailbox
   "Creates a behavior node that processes messages according to the message-handler, 
    where message-handler is a function the takes a behavior environment and a message, 
@@ -286,12 +288,12 @@
            (reduce (fn [acc msg]                  
                      (message-handler msg (val! acc)))
                    (success (assoc benv :current-messages nil))
-                   current-messages))))))
+                   current-messages)))) nil))
 
 (defn process-messages-beh [handler]
   (->or [(->and [(echo :check-messages)
                  check-messages
-                 (->mailbox handle-messages)])
+                 (->mailbox handler)])
          (echo :no-messages)]))
 
 
