@@ -721,7 +721,7 @@
   (if (== n (count wl))
       (store/dissoce ctx :waiting-list svc)
       (store/assoce ctx :waiting-list svc
-         (into [] (subvec wl n)))))
+                    (into [] (subvec wl n)))))
 
 (defn add-client [provider id ctx]
   (store/updatee ctx provider :clients conj id))
@@ -760,22 +760,31 @@
 
 ;;when a client is in waiting, we update the client...
 (defn waiting-service [ctx id]
-  (allocate-provider ctx "VRC Waiting Area" "Waiting" id))
-       
+  (-> ctx 
+      (allocate-provider  "VRC Waiting Area" "Waiting" id)
+      (store/assoce id :unoccupied true)))
+
+(defn needs-service? [e]
+  (or (not (:active-service e))
+      (= (:active-service e) "Waiting")))
+
 ;;Note: when we assign entities
 (defn assign-service [ctx svc ents provider-caps]
-  (let [ents   (vec ents)
+  (let [ents   (filterv (comp needs-service? #(store/get-entity ctx %))  ents)
         deltas (fill-to (count ents) provider-caps)      
         idx    (atom 0)
         assign-ent (fn [ctx provider]
                      (let [id (nth ents @idx)
                            _  (reset! idx (inc @idx))]
                            (allocate-provider ctx provider svc id)))]
-    (-> (reduce (fn blah [acc [provider n remaining]]
-                  #_(println n)
-                  (reduce (fn [acc _] (assign-ent acc provider)) acc (range n)))
-                       ctx deltas)
-        (pop-waiting-list svc ents @idx))))
+    ;(->
+     (reduce (fn blah [acc [provider n remaining]]
+               #_(println n)
+               (reduce (fn [acc _] (assign-ent acc provider)) acc (range n)))
+             ctx deltas)
+     #_(pop-waiting-list svc ents @idx))
+  ;)
+)
 
 ;;if the entity is not in active service, it's eligible.
 ;;ineligible entities will be pruned transitively (they
@@ -801,7 +810,7 @@
    allocated."
   [ctx]
   (->> (store/select-entities ctx :from :active-service)
-       (filter (comp not :active-service) )
+       (filter (comp not :active-service))
        (map :name)))
 
 (defn wait-capacity
@@ -832,7 +841,7 @@
 (defn allocate-services [ctx]
   (->> ctx
        (fill-services)
-       (allocate-waits)))
+       #_(allocate-waits)))
 
 (defn allocate-waits [ctx]
   (if-let [ids (seq (not-allocated ctx))]
@@ -841,6 +850,20 @@
          ;;try to get the unallocated entities to wait in the waiting area.
          (reduce waiting-service ctx))
     ctx))
+
+(defn clear-waiting-lists [ctx]
+  (let [wl (store/get-entity ctx :waiting-list)]
+    (if (seq wl) ;;there's some lists...
+      (let [available? (or (store/get-domain ctx :unoccupied) {})]
+        (reduce-kv (fn [acc svc xs]
+                     (let [xs (filterv available? xs)]
+                       (if (seq xs)
+                         (store/assoce  acc :waiting-list svc xs)
+                         (store/dissoce acc :waiting-list svc))))
+                        ctx wl))
+             
+      ctx)))
+                                                     
 
 ;;Any entities unallocated entities are discharged, because by this point,
 ;;they should have been able to leave.
@@ -874,6 +897,7 @@
        (update-clients)
        (fill-services)
        (allocate-waits)
+       (clear-waiting-lists)
        (finalize-clients)
        (end-t)))
 
@@ -903,6 +927,7 @@
      (def t2 (step t1))
      (def t3 (step t2))
      (def t4 (step t3))
+     (def t5 (step t4))
      )
 ; (def asim (sim/advance-time isim1a))
 
