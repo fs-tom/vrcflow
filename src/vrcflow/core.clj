@@ -619,7 +619,7 @@
     (->> (sim/get-updates update-type t ctx)
          (keys)
          (reduce (fn [acc e]
-                   (println [:updating e])
+                   #_(println [:updating e])
                    (send!! (store/get-entity acc e) :update t acc)) ctx))))
 
 ;;Service operations
@@ -901,6 +901,12 @@
        (finalize-clients)
        (end-t)))
 
+
+(defn step-day
+  ([seed]
+   (take-while (fn [x] (< (core/get-time x) (* 60 8))) (iterate step seed)))
+  ([] (step-day (init (core/debug! emptysim) :initial-arrivals {:n 10 :t 1}
+                       :default-behavior client-beh))))
 ;;Notes // Pending:
 ;;Priority rules may be considered (we don't here).  It's first-come-first-serve
 ;;priority right now.  Do they matter in practice?  Is there an actual
