@@ -271,7 +271,7 @@
   "For testing purposes, provides a vector of default needs 
    we can use for random needs generation, as a function of 
    the basic network."
-  (vec (filter (complement #{"Where Can I Wait?"})
+  (vec (filter #(not (#{"Where Can I Wait?" "Self Assessment" "Where do I go?"} %))
                (indicators basic-network))))
 
 ;;this is just a shim for generating needs.
@@ -521,7 +521,9 @@
                     client-update-beh                           
                     ]) 
     :wait   #(let [msg (:current-message %)
-                   {:keys [location wait-time]} (:data msg)]
+                   {:keys [location wait-time]} (:data msg)
+                   _ (when (= (:name @(:entity %)) "1_6")
+                       (println [:waiting (dissoc @(:entity %) :behavior)]))]
                (wait-beh location wait-time))
     :leave  leaving-beh}))
 
