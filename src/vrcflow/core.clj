@@ -791,7 +791,6 @@
   (or (not (:active-service e))
       (= (:active-service e) "Waiting")))
 
-;;Note: when we assign entities
 (defn assign-service [ctx svc ents provider-caps]
   (let [ents   (filterv (comp needs-service? #(store/get-entity ctx %))  ents)
         deltas (fill-to (count ents) provider-caps)      
