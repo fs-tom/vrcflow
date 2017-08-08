@@ -5,7 +5,7 @@
    [vrcflow [data :as data] [actor :as actor] #_[behavior :as beh]]
    [spork.entitysystem.store :refer [defentity keyval->component] :as store]
    [spork.util [table   :as tbl] [stats :as stats]]
-   [spork.sim  [core :as core] [simcontext :as sim]]
+   [spork.sim  [core :as core] [simcontext :as sim] [history :as history]]
    [spork.ai   [behaviorcontext :as bctx]
                [messaging :refer [send!! handle-message! ->msg]]
                [core :refer [debug]]]
@@ -84,8 +84,7 @@
 (defn providers [db] (store/select-entities db :from :provider-entity))
 (defn active-providers [db] (filter (comp seq :clients) (providers db)))
 (defn service-time [db provider svc]
-  (let [net (service-network db)]
-    (graph/arc-weight basic-network provider svc)))
+  (graph/arc-weight (service-network db) provider svc))
     
 
 ;;So, service-providers can serve up to capacity clients....
@@ -271,7 +270,7 @@
   "For testing purposes, provides a vector of default needs 
    we can use for random needs generation, as a function of 
    the basic network."
-  (vec (filter #(not (#{"Where Can I Wait?" "Self Assessment" "Where do I go?"} %))
+  (vec (filter #(not (#{"Where can I Wait?" "Self Assessment" "Where do I go?"} %))
                (indicators basic-network))))
 
 ;;this is just a shim for generating needs.
@@ -363,6 +362,7 @@
            (dissoc % :wait-time) ;remove the wait-time from further consideration...           
            )))))
 
+(declare screening)
 (defn wait-beh [location wait-time]
   (->and [(echo "waiting....")
           (alter-entity {:location location
@@ -389,12 +389,20 @@
 (defn set-active-service [svc]
   (->alter #(assoc % :active-service svc)))
 
+(befn set-departure {:keys [entity tupdate] :as benv}
+      (->seq [(echo "scheduling departure!")
+              (->do (fn [_] (swap! entity assoc :departure tupdate)))]
+      ))
+
 ;;Prepare the entity's service plan based off of its needs.
 ;;If it already has one, we're done.
 (befn get-service-plan {:keys [entity ctx] :as benv}
   (let [ent  @entity]
-    (if (:service-plan ent)
-      (echo (str (:name ent) " has a service plan"))
+    (if-let  [plan (:service-plan ent)]
+      (if (pos? (count plan))
+        (echo (str (:name ent) " has a service plan"))
+        (->seq [(echo (str (:name ent) " completed service plan!"))                
+                set-departure]))
       (let [_    (debug (str "computing service plan for "
                              (select-keys ent [:name :needs])))
             net  (store/gete @ctx :parameters :service-network)
@@ -459,12 +467,14 @@
      (success benv))))
 
 (declare deallocate-provider)
+;;Make sure we remove the service from the service-plan.
 (befn finish-service {:keys [ctx entity] :as benv}
  (let [ent @entity
        active-service (:active-service ent)]
-   (->seq [(echo (str "Entity finished service" active-service))
+   (->seq [(echo (str "Entity finished service: " active-service))
            (alter-entity {:active-service nil
-                          :location nil})
+                          :location nil
+                          :service-plan (dissoc (:service-plan ent) active-service)})
            (->do (fn [_]
                    (swap! ctx
                           deallocate-provider
@@ -481,12 +491,14 @@
           (if (zero? wt)
             (->seq [finish-service
                     get-service-plan
-                    request-next-available-service])
+                    request-next-available-service
+                    reset-wait-time])
             (echo "Still in service")))
         
         (->seq [(echo "looking for services")
                 get-service-plan
-                request-next-available-service])))
+                request-next-available-service
+                reset-wait-time])))
 
 (def client-update-beh
   (->seq [(echo "client-updating")
@@ -502,16 +514,19 @@
       (success benv))))
 
 (def leaving-beh
-  (->seq [(echo "leaving!")
+  (->seq [(echo "leaving!")          
           (->do (fn [benv]
                   (let [ent @(:entity benv)]
                     (swap! (:ctx benv)
                            #(core/trigger-event :leaving 
-                             (:name ent) 
-                             :anyone
-                             (str (:name ent) :left)
-                             nil
-                             %)))))]
+                                                (:name ent) 
+                                                :anyone
+                                                (str (:name ent) :left)
+                                                nil
+                                                %)
+                           )
+                    (swap! (:entity benv) merge {:departure (:tupdate benv)
+                                                 :wait-time 0}))))]
          ))
 
 ;;update behavior is governed by 
@@ -522,8 +537,9 @@
                     ]) 
     :wait   #(let [msg (:current-message %)
                    {:keys [location wait-time]} (:data msg)
-                   _ (when (= (:name @(:entity %)) "1_6")
-                       (println [:waiting (dissoc @(:entity %) :behavior)]))]
+                   ;; _ (when (= (:name @(:entity %)) "1_6")
+                   ;;     (println [:waiting (dissoc @(:entity %) :behavior))))
+                   ]
                (wait-beh location wait-time))
     :leave  leaving-beh}))
 
@@ -642,8 +658,8 @@
     (->> (sim/get-updates update-type t ctx)
          (keys)
          (reduce (fn [acc e]
-                   #_(println [:updating e])
-                   (send!! (store/get-entity acc e) :update t acc)) ctx))))
+                   (send!! (store/get-entity acc e) :update t acc))
+                   ctx))))
 
 ;;Service operations
 ;;==================
@@ -754,7 +770,7 @@
     :clients #(into [] (filter (fn [x] (not= x id))) %)))
 
 ;;when clients engage in a service, they end up waiting.
-(defn service->behavior [svc]
+#_(defn service->behavior [svc]
   (case svc
     "Screening" screening
     wait))
@@ -763,8 +779,8 @@
   "Allocate the entity to the provider's service,"
   [ctx provider svc id]
   (let [wait-time (service-time ctx provider svc)]
-    (debug [:assigning id :to svc :for wait-time])
-    (->> (store/assoce ctx id :active-service svc)
+    (debug [:assigning id :to svc :for wait-time (dissoc (store/get-entity ctx id) :behavior)])
+    (->> (store/mergee ctx id {:active-service svc :unoccupied false})
          (add-client provider id)
          (wait-at id provider wait-time)
          (sim/trigger-event :acquired-service id provider
@@ -787,12 +803,29 @@
       (allocate-provider  "VRC Waiting Area" "Waiting" id)
       (store/assoce id :unoccupied true)))
 
-(defn needs-service? [e]
+(defn needs-service?
+  [e]
   (or (not (:active-service e))
       (= (:active-service e) "Waiting")))
 
+(defn wants-service?
+  [e svc]
+  (get (:service-plan e) svc))
+
+;;if the entity is not in active service, it's eligible.
+;;ineligible entities will be pruned transitively (they
+;;may have acquired service in the mean-time...
+(defn service-eligible?
+  ([svc e]
+   (and (needs-service? e)
+        (wants-service?  e svc))))
+
+;;when we assign an entity to a service, we need to
+;;eliminate him from the waiting lists; or otherwise
+;;mark him as unavailable.
 (defn assign-service [ctx svc ents provider-caps]
-  (let [ents   (filterv (comp needs-service? #(store/get-entity ctx %))  ents)
+  (let [ents   (filterv (comp (partial service-eligible? svc)
+                              #(store/get-entity ctx %))  ents)
         deltas (fill-to (count ents) provider-caps)      
         idx    (atom 0)
         assign-ent (fn [ctx provider]
@@ -808,11 +841,6 @@
   ;)
 )
 
-;;if the entity is not in active service, it's eligible.
-;;ineligible entities will be pruned transitively (they
-;;may have acquired service in the mean-time...
-(defn service-eligible? [ctx e]
-  (not (store/gete e :active-service)))
                  
 ;;note: some entities may no longer care about services...
 ;;Assume, for now, that the waiting list is up to date,
@@ -831,15 +859,19 @@
   "Return a sequence of entities that have no active-service 
    allocated."
   [ctx]
-  (->> (store/select-entities ctx :from :active-service)
-       (filter (comp not :active-service))
+  (->> (store/select-entities ctx :from [:active-service])
+       (filter (fn [e] (and (not (:active-service e))
+                            (not (:departure e))
+                            (pos? (:wait-time e)))))
        (map :name)))
+
+(defn departures [ctx] (keys (store/get-domain ctx :departure)))
 
 (defn wait-capacity
   "Returns the amount of spaces we have for folks to sit and wait.."
   [ctx]
   (current-capacity
-   (store/get-entity fills "VRC Waiting Area")))
+   (store/get-entity ctx "VRC Waiting Area")))
 
 
 ;;Update Clients [notify clients of the passage of time, leading to
@@ -862,8 +894,7 @@
 ;;wait (with a wait-time of up to +wait-time+).
 (defn allocate-services [ctx]
   (->> ctx
-       (fill-services)
-       #_(allocate-waits)))
+       (fill-services)))
 
 (defn allocate-waits [ctx]
   (if-let [ids (seq (not-allocated ctx))]
@@ -886,19 +917,22 @@
              
       ctx)))
                                                      
-
+  
 ;;Any entities unallocated entities are discharged, because by this point,
 ;;they should have been able to leave.
 (defn finalize-clients [ctx]
-  (if-let [drops (seq (not-allocated ctx))]
+  (if-let [drops (seq (concat (not-allocated ctx) (departures ctx)))]
     (do (debug "dropping entities!")
         (reduce (fn [acc id]
-                  (send!! (store/get-entity acc id)
-                          :leave nil))
+                  (-> (send!! (store/get-entity acc id)
+                              :leave nil acc)
+                      (store/drop-entity id)
+                      (sim/drop-entity-updates id)))
                 ctx
                 drops))
     (do (debug "no entities to drop!")
         ctx)))
+
 ;;Note: we "could" use dataflow dependencies, ala reagent, to establish a declarative
 ;;way of relating dependencies in the simulation.
 
@@ -915,27 +949,34 @@
       (->> ctx 
       (core/trigger-event :begin-t :system :system
          (core/msg ">>>>>>>>>>>>>Ending time "
-                       (core/get-time ctx) "<<<<<<<<<<<<<<") nil)
-      (sim/advance-time))))
+                       (core/get-time ctx) "<<<<<<<<<<<<<<") nil))))
 
-(defn step [ctx]
-  (->> ctx
-       (begin-t)
-       (process-arrivals)
-       (update-clients)
-       (fill-services)
-       (allocate-waits)
-       (clear-waiting-lists)
-       (finalize-clients)
-       (end-t)))
+;;note: the double-arity is to conform with the simulator
+;;from spork.sim.history....we can probably look into changing
+;;that in the near future.
+(defn step
+  ([ctx]
+   (->> ctx
+        (begin-t)
+        (process-arrivals)
+        (update-clients)
+        (fill-services)
+        (allocate-waits)
+        (clear-waiting-lists)
+        (finalize-clients)
+        (end-t)))
+  ([t ctx] (step ctx)))
 
 (defn seed-ctx []
-  (end-t (init (core/debug! emptysim) :initial-arrivals {:n 10 :t 1}
-               :default-behavior client-beh)))
+  (->> (init (core/debug! emptysim) :initial-arrivals {:n 10 :t 1}
+             :default-behavior client-beh)
+       (begin-t)
+       (end-t)))
+
 (defn step-day
-  ([seed]
-   (take-while (fn [x] (< (core/get-time x) (* 60 8))) (iterate step seed)))
-  ([] (step-day  (seed-ctx))))
+  ([seed] (history/state-stream seed
+              :tmax (* 60 8) :step-function step :keep-simulating? (fn [_] true)))
+  ([] (step-day (sim/advance-time (seed-ctx)))))
 ;;Notes // Pending:
 ;;Priority rules may be considered (we don't here).  It's first-come-first-serve
 ;;priority right now.  Do they matter in practice?  Is there an actual
@@ -964,6 +1005,40 @@
      (def t4 (step t3))
      (def t5 (step t4))
      )
+
 ; (def asim (sim/advance-time isim1a))
+
+  )
+
+
+(comment
+  
+(defn discrete-entity-history
+  "Given a context and an entity id to follow, returns a 
+   map of the discrete values of the entity's history 
+   as a function of time.  Ensures that only inflections 
+   where the entity history changes are captured. 
+   Caller may supply an optional sample? function  
+   to determine if frames should be dropped."
+  [ctx id & {:keys [sample?] :or {sample?
+                                  (fn [x] true)}}]
+  (let [tfinal (when (and (coll? sample?)
+                          (every? number? sample?))
+                 (reduce max sample?))
+        sample? (if tfinal (let [time?  (set sample?)]
+                             (fn [ctx]
+                               (time? (:t ctx))))
+                    sample?)]
+  (->>  (as-stream ctx)
+        ;;(raw-frames) elided for now.
+        (map (fn [[t ctx :as f]]
+               (let [e   (store/get-entity ctx id)]
+                 (assoc e :t t))))
+        (filter :name) ;;unnamed entities don't exist
+        (take-while (if tfinal (fn [f] (<= (:t f) tfinal))
+                        (fn [x] true)))
+        (filter #(and (sample? %)
+                      (== (:last-update %) (:t %))))
+        )))
 
   )

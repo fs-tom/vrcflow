@@ -50,7 +50,74 @@
             )
   (:import [spork.ai.behaviorcontext behaviorenv]))
 
+;;migrate.,..
+(defn echo [msg]
+  (fn [ctx] (do (debug msg) (success ctx))))
 
+(defn rconcat
+  ([& colls]
+   (reify clojure.core.protocols/CollReduce
+     (coll-reduce [this f1]
+       (let [c1   (first colls)
+             init (reduce (fn [acc x] (reduced x)) (r/take 1 c1))
+             a0   (reduce f1 init (r/drop 1 c1))]
+         (if (reduced? a0) @a0
+             (reduce (fn [acc coll]
+                       (reduce (fn [acc x]
+                                 (f1 acc x)) acc coll)) a0 (r/drop 1 colls)))))
+     (coll-reduce [this f init]
+       (reduce (fn [acc coll]
+                (reduce (fn [acc x]
+                          (f acc x)) acc coll)) init colls))
+     clojure.lang.ISeq
+     (seq [this] (seq (into [] (r/mapcat identity colls) )))
+     )))
+
+
+;;the entity will see if a message has been sent
+;;externally, and then compare this with its current internal
+;;knowledge of messages that are happening concurrently.
+(befn check-messages ^behaviorenv {:keys [entity current-messages ctx] :as benv}
+   (if-let [old-msgs (fget (deref! entity) :messages)] ;we have messages
+     (when-let [msgs   (pq/chunk-peek! old-msgs)]
+       (let [new-msgs  (rconcat (r/map val  msgs) current-messages)
+             _         (b/swap!! entity (fn [^clojure.lang.Associative m]
+                                          (.assoc m :messages
+                                                  (pq/chunk-pop! old-msgs msgs)
+                                                 )))]
+         (bind!! {:current-messages new-msgs})))
+     (when current-messages
+       (success benv))))
+
+(defn up-to-date? [e ctx] (== (:tupdate e) (:tupdate ctx)))
+
+;;look into using actor idioms..
+;;  receive, etc.
+(defn ->mailbox
+  "Creates a behavior node that processes messages according to the message-handler, 
+   where message-handler is a function the takes a behavior environment and a message, 
+   and returns a behavior environment.  Note: currently the reducer will just plow 
+   through messages, that is, we don't have the concept of selective-receive.
+   We just process messages in bulk."
+  [message-handler]
+  (->bnode :mailbox nil
+     (fn [^behaviorenv benv]
+       (let [{:keys [entity current-messages ctx]} benv]
+         (when current-messages
+           (reduce (fn [acc msg]                  
+                     (message-handler msg (val! acc)))
+                   (success (assoc benv :current-messages nil))
+                   current-messages)))) nil))
+
+(defn process-messages-beh [handler]
+  (->or [(->and [(echo :check-messages)
+                 check-messages
+                 (->mailbox handler)])
+         (echo :no-messages)]))
+
+
+;;OBE for now...
+;;==============
 ;;__utils__
 (def ^:constant +inf+ Long/MAX_VALUE)
 
@@ -75,25 +142,6 @@
      res# 
      ~@else))
 
-(defn rconcat
-  ([& colls]
-   (reify clojure.core.protocols/CollReduce
-     (coll-reduce [this f1]
-       (let [c1   (first colls)
-             init (reduce (fn [acc x] (reduced x)) (r/take 1 c1))
-             a0   (reduce f1 init (r/drop 1 c1))]
-         (if (reduced? a0) @a0
-             (reduce (fn [acc coll]
-                       (reduce (fn [acc x]
-                                 (f1 acc x)) acc coll)) a0 (r/drop 1 colls)))))
-     (coll-reduce [this f init]
-       (reduce (fn [acc coll]
-                (reduce (fn [acc x]
-                          (f acc x)) acc coll)) init colls))
-     clojure.lang.ISeq
-     (seq [this] (seq (into [] (r/mapcat identity colls) )))
-     )))
-
 #_(defn pass 
   [msg ctx]  
   (->> (success ctx)
@@ -111,9 +159,7 @@
   `(do (debug ~msg)
        ~ctx))
 
-;;migrate.,..
-(defn echo [msg]
-  (fn [ctx] (do (debug msg) (success ctx))))
+
 
 (defmacro deref!! [v]
   (let [v (with-meta v {:tag 'clojure.lang.IDeref})]
@@ -148,9 +194,6 @@
 
 (defn entity-state [u] (-> u :statedata :curstate))
 
-;;(defmacro kw? [x]
-;;  `(instance? clojure.lang.Keyword ~x))
-
 (defn has?
   "Dumb aux function to help with state sets/keys.
    If we have an fsm with statedata, we can check 
@@ -172,6 +215,11 @@
   (has? (entity-state u) s))
 
 (defn waiting? [u]  (has-state? u :waiting))
+
+;;Not used...
+;;===========
+
+
 
 ;;entities have actions that can be taken in a state...
 #_(def default-statemap
@@ -209,22 +257,6 @@
 
 #_(def default-state-map {:waiting (echo :waiting-state)})
 
-;;the entity will see if a message has been sent
-;;externally, and then compare this with its current internal
-;;knowledge of messages that are happening concurrently.
-(befn check-messages ^behaviorenv {:keys [entity current-messages ctx] :as benv}
-   (if-let [old-msgs (fget (deref! entity) :messages)] ;we have messages
-     (when-let [msgs   (pq/chunk-peek! old-msgs)]
-       (let [new-msgs  (rconcat (r/map val  msgs) current-messages)
-             _         (b/swap!! entity (fn [^clojure.lang.Associative m]
-                                          (.assoc m :messages
-                                                  (pq/chunk-pop! old-msgs msgs)
-                                                 )))]
-         (bind!! {:current-messages new-msgs})))
-     (when current-messages
-       (success benv))))
-
-
 
 ;;we'd probably like to encapsulate this in a component that can be seen as a "mini system"
 ;;basically, it'd be a simple record, or a function, that exposes a message-handling
@@ -244,6 +276,7 @@
                 (success (assoc benv :current-messages nil))
                 current-messages)))
 
+
 #_(defn handle-messages-with [handler]
   (befn handle-messages ^behaviorenv {:keys [entity current-messages ctx] :as benv}
       (when current-messages
@@ -251,13 +284,10 @@
                   (message-handler msg (val! acc)))
                 (success (assoc benv :current-messages nil))
                 current-messages))))
-
 #_(befn up-to-date {:keys [entity tupdate] :as benv}
       (let [e (reset! entity (assoc @entity :last-update tupdate))]
         (echo [:up-to-date (:name e) :cycletime (:cycletime e) :last-update (:last-update e) :tupdate tupdate
                :positionpolicy (:positionpolicy e)])))
-
-(defn up-to-date? [e ctx] (== (:tupdate e) (:tupdate ctx)))
 
 ;;This will become an API call...
 ;;instead of associng, we can invoke the protocol.
@@ -272,33 +302,8 @@
             ]        
         (success (push-message- benv nm nm (->msg nm nm tfut :update)))))
 
-;;look into using actor idioms..
-;;  receive, etc.
-(defn ->mailbox
-  "Creates a behavior node that processes messages according to the message-handler, 
-   where message-handler is a function the takes a behavior environment and a message, 
-   and returns a behavior environment.  Note: currently the reducer will just plow 
-   through messages, that is, we don't have the concept of selective-receive.
-   We just process messages in bulk."
-  [message-handler]
-  (->bnode :mailbox nil
-     (fn [^behaviorenv benv]
-       (let [{:keys [entity current-messages ctx]} benv]
-         (when current-messages
-           (reduce (fn [acc msg]                  
-                     (message-handler msg (val! acc)))
-                   (success (assoc benv :current-messages nil))
-                   current-messages)))) nil))
-
-(defn process-messages-beh [handler]
-  (->or [(->and [(echo :check-messages)
-                 check-messages
-                 (->mailbox handler)])
-         (echo :no-messages)]))
 
 
-;;OBE for now...
-;;==============
 
 ;; ;;The global sequence of behaviors that we'll hit every update.
 ;; ;;These are effectively shared behaviors across most updates.
