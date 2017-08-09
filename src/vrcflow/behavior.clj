@@ -235,6 +235,7 @@
                                                 %)
                            )
                     (swap! (:entity benv) merge {:departure (:tupdate benv)
+                                                 :location  "exit"
                                                  :wait-time 0}))))]
          ))
 

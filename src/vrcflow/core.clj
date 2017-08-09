@@ -2,7 +2,8 @@
 ;;finding and receiving services to meet needs.
 (ns vrcflow.core
   (:require
-   [vrcflow [data :as data] [actor :as actor] [behavior :as beh] [services :as services]]
+   [vrcflow [data :as data] [actor :as actor] [behavior :as beh] [services :as services]
+            [stacked :as stacked]]
    [spork.entitysystem.store :refer [defentity keyval->component] :as store]
    [spork.util [table   :as tbl] [stats :as stats]]
    [spork.sim  [core :as core] [simcontext :as sim] [history :as history]]
@@ -58,6 +59,12 @@
            (services/register-providers service-network)
            )))
   ([] (init emptysim)))
+
+(defn process-departures [ctx]
+  (->> (store/get-domain ctx :departure)
+       (keys)
+       (reduce (fn [acc id]
+                 (store/drop-entity acc id))  ctx)))
 
 (defn process-arrivals
   "The arrivals system processes batches of entities and schedules more arrival
@@ -117,7 +124,7 @@
 (defn fill-services
   ([waiting ctx]
    (reduce-kv (fn [acc svc ents]
-                (when-let [xs (services/available-service svc ctx)] 
+                (when-let [xs (services/available-service svc acc)] 
                   (assign-service acc svc ents xs)))
               ctx waiting))
   ([ctx]
@@ -144,7 +151,7 @@
     (->> ids
          (take (services/wait-capacity ctx))
          ;;try to get the unallocated entities to wait in the waiting area.
-         (reduce waiting-service ctx))
+         (reduce services/waiting-service ctx))
     ctx))
 
 (defn clear-waiting-lists [ctx]
@@ -168,8 +175,7 @@
     (do (debug "dropping entities!")
         (reduce (fn [acc id]
                   (-> (send!! (store/get-entity acc id)
-                              :leave nil acc)
-                      (store/drop-entity id)
+                              :leave nil acc)                      
                       (sim/drop-entity-updates id)))
                 ctx
                 drops))
@@ -200,6 +206,7 @@
   ([ctx]
    (->> ctx
         (begin-t)
+        (process-departures)
         (process-arrivals)
         (update-clients)
         (fill-services)
@@ -209,6 +216,8 @@
         (end-t)))
   ([t ctx] (step ctx)))
 
+;;Simulation Control and Harnessing
+;;=================================
 (defn seed-ctx []
   (->> (init (core/debug! emptysim) :initial-arrivals {:n 10 :t 1}
              :default-behavior beh/client-beh)
@@ -223,6 +232,32 @@
 ;;Priority rules may be considered (we don't here).  It's first-come-first-serve
 ;;priority right now.  Do they matter in practice?  Is there an actual
 ;;triage process?
+
+;;History Queries
+;;===============
+
+(defn provider-trends [p]
+    #_(assert (<= #_util (services/utilization p) 1.0) (str ["utilization too high!" (services/utilization p) p]))
+  [(:name p)
+   {:utilization (core/float-trunc (services/utilization p) 2)
+    :clients (count (:clients p))
+    :capacity (:capacity p)}])
+
+(defn client-trends [p]
+    #_(assert (<= #_util (services/utilization p) 1.0) (str ["utilization too high!" (services/utilization p) p]))
+  {:location (
+   }])
+
+;;Given a history, we can get data and trends from it...
+(defn frame->location-quantities [[t ctx]]
+  (->> (services/providers ctx)
+       (mapv provider-trends)
+       (into {})
+       (assoc {:t t}  :trends)))
+
+(defn frame->clients [[t ctx]]
+  (->> (services/clients ctx)
+       (mapv #(hash-map :t t :location (:location %)))))
 
 (comment  ;testing
   (core/debugging!
@@ -248,6 +283,54 @@
      (def t5 (step t4))
      )
 
+    (require '[incanter [core :as i] [stats :as s] [charts :as c]])
+    (def res  (mapv frame->location-quantities (step-day)))
+    (def provider-order
+      ["VRC Waiting Area"
+       "VRC Reception Area"
+       "Chaplain Services"
+       "Army Substance Abuse Program"
+       
+       "Teaching Kitchen"
+       "Army Wellness Center"
+       "Comprehensive Soldier and Family Fitness Program"
+       "Nutritional Medicine"
+       "Health Promotion Operations"
+
+       "Military And Family Readiness Center"
+       "Army Public Health Nursing"])
+    (defn location-quantities->chart [xs]
+      (-> (->>  (for [{:keys [t trends]} xs
+                      [provider {:keys [utilization]}] trends]
+                  {:t t :utilization utilization :provider provider})
+                (i/dataset [:t :utilization :provider])
+                (i/$rollup :sum  :utilization [:t :provider]))
+          
+          (stacked/->stacked-area-chart  :row-field :t :col-field :provider
+                                         :values-field :utilization
+                                         :x-label "time (minutes)"
+                                         :y-label "Percent Utilization"
+                                         :tickwidth 60
+                                         :order-by (stacked/as-order-function  provider-order))))
+
+    (defn client-quantities->chart [xs]
+      (-> (->>  (for [sample xs
+                      [loc gr] (group-by :location sample)]
+                  {:t (:t (first gr)) :quantity (count gr) :location (or loc "empty")})
+                (i/dataset [:t :quantity :location])
+                (i/$rollup :sum  :quantity [:t :location]))
+          
+          (stacked/->stacked-area-chart  :row-field :t :col-field :location
+                                         :values-field :quantity
+                                         :x-label "time (minutes)"
+                                         :y-label "Quantity"
+                                         :tickwidth 60
+                                         :order-by (stacked/as-order-function  provider-order))))
+            
+      
+      ())
+    
+    
 ; (def asim (sim/advance-time isim1a))
 
   )

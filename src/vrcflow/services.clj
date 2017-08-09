@@ -376,6 +376,9 @@
 
 (defn current-capacity [provider]
   (- (:capacity provider) (count (:clients provider))))
+
+(defn utilization [provider]
+  (/ (count (:clients provider)) (:capacity provider)))
  
 (defn available-service [svc ctx]
   (when-let [providers (service->providers svc
