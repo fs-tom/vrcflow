@@ -218,8 +218,10 @@
 
 ;;Simulation Control and Harnessing
 ;;=================================
-(defn seed-ctx []
-  (->> (init (core/debug! emptysim) :initial-arrivals {:n 10 :t 1}
+(defn seed-ctx
+  [& {:keys [initial-arrivals]
+      :or {initial-arrivals {:n 10 :t 1}}}]
+  (->> (init (core/debug! emptysim) :initial-arrivals initial-arrivals
              :default-behavior beh/client-beh)
        (begin-t)
        (end-t)))
@@ -299,6 +301,22 @@
 
        "Military And Family Readiness Center"
        "Army Public Health Nursing"])
+    (def provider-colors
+      {"VRC Waiting Area" :dark-green
+       "VRC Reception Area" :green
+       "Chaplain Services"   :light-blue
+       "Army Substance Abuse Program" :red
+       
+       "Teaching Kitchen"  :yellow
+       "Army Wellness Center" :olive-drab
+       "Comprehensive Soldier and Family Fitness Program" :maroon
+       "Nutritional Medicine"  :gold
+       "Health Promotion Operations" :amber
+
+       "Military And Family Readiness Center" :dark-blue
+       "Army Public Health Nursing"   :light-orange
+       "exit" :black
+       })
     (defn location-quantities->chart [xs]
       (-> (->>  (for [{:keys [t trends]} xs
                       [provider {:keys [utilization]}] trends]
@@ -322,10 +340,12 @@
           
           (stacked/->stacked-area-chart  :row-field :t :col-field :location
                                          :values-field :quantity
-                                         :x-label "time (minutes)"
-                                         :y-label "Quantity"
+                                         :title "Clients Located by Time"
+                                         :x-label "Time (minutes)"
+                                         :y-label "Quantity (clients)"
                                          :tickwidth 60
-                                         :order-by (stacked/as-order-function  provider-order))))
+                                         :order-by (stacked/as-order-function  provider-order)
+                                         :color-by provider-colors)))
             
       
       ())
