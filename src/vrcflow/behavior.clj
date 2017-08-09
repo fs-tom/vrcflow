@@ -235,7 +235,9 @@
                                                 %)
                            )
                     (swap! (:entity benv) merge {:departure (:tupdate benv)
-                                                 :location  "exit"
+                                                 :location  (if (empty? (:service-plan ent))
+                                                              "completed"
+                                                              "exited")
                                                  :wait-time 0}))))]
          ))
 
