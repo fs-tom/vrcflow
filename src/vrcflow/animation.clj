@@ -129,7 +129,16 @@
                 :arcs? arcs?))
 
 
+(defn ->client []
+  (picc/->filled-rect :blue 0 0 10 10))
+
+;;working on client api...
+#_(defn add-client [m nm]
+  (gis/add-token ))
+
 (comment ;testing
+  (defn ->client []
+    (picc/->filled-rect :blue 0 0 10 10))
   (def client (picc/->filled-rect :blue 0 0 10 10))
   (def e (-> (empty-map) (gis/add-token :client client)))
   (def clck (atom 0))
@@ -137,21 +146,20 @@
   ;;THere's a problem with gis/send-to, in that the
   ;;call to picc/do-scene always returns nil, so we end up
   ;;closing the response channel too early.
-  (def p
-    (let [places (keys (gis/places e))]
-      (do   ;(dotimes [i 10]
-        (let [res (gis/send-to clck e :client (rand-nth places))
-              p   (promise)
-              _   (clojure.core.async/go
-                    (let [x (clojure.core.async/<! res)]
+  (let [places (keys (gis/places e))]
+    (dotimes [i 10]
+      (let [target (rand-nth places)
+            _ (println target)
+            res (gis/send-to clck e :client target)
+            p   (promise)
+            _   (clojure.core.async/go
+                  (let [x (clojure.core.async/<! res)]
                       (deliver p x)))]
-          #_(loop [p p]
-              (if (realized? p)
-                (println [:done @p])
-                (do (swap! clck inc)
-                    (Thread/sleep 16)
-                    (recur p))))
-          p #_(realized? p)))))
+        (while (not (realized? p))
+          (do  (swap! clck inc)
+               (Thread/sleep 16)
+               ))
+        )))
                                          ;)
             
 
