@@ -2,14 +2,19 @@
 ;;finding and receiving services to meet needs.
 (ns vrcflow.core
   (:require
-   [vrcflow [data :as data] [actor :as actor] [behavior :as beh] [services :as services]
-    [stacked :as stacked]]
-   [incanter [core :as i] [charts :as c]]
+   [vrcflow [behavior :as beh]
+            [services :as services]
+            [analysis :as analysis]]
+   [incanter [core :as i]
+             [charts :as c]
+             [stats :as s]]
    [spork.entitysystem.store :refer [defentity keyval->component] :as store]
-   [spork.util [table   :as tbl] [stats :as stats]]
-   [spork.sim  [core :as core] [simcontext :as sim] [history :as history]]
-   [spork.ai   [behaviorcontext :as bctx]
-               [messaging :refer [send!! handle-message! ->msg]]
+   [spork.util #_[table   :as tbl] [stats :as stats]]
+   [spork.sim  [core :as core]
+               [simcontext :as sim]
+               [history :as history]]
+   [spork.ai   #_[behaviorcontext :as bctx]
+               [messaging :refer [send!! #_handle-message! #_->msg]]
                [core :refer [debug]]]
    ))
 
@@ -41,10 +46,17 @@
                    (send!! (store/get-entity acc e) :update t acc))
                    ctx))))
 
-
+;;Note: the only crucial bit of information we need for this
+;;service simulation to work is the service network and the
+;;entity behavior.  Everything else is generic.  So our
+;;big degrees of freedom are building/defining service
+;;networks, and defining how entity behaviors interpret said
+;;networks.
 (defn init
   "Creates an initial context with a fresh distribution, schedules initial
-   batch of arrivals too."
+   batch of arrivals too.  If no inital arrivals are provided,
+   generates an initial arrival batch based on the supplied
+   distribution."
   ([ctx & {:keys [default-behavior service-network initial-arrivals]
            :or {default-behavior beh/client-beh
                 service-network  services/basic-network}}]
@@ -102,6 +114,8 @@
          (cons [nm c (- n c)]
                (fill-to (- n c) (rest xs))))))))
 
+;;Generic service-filling operations.
+;;===================================
 ;;when we assign an entity to a service, we need to
 ;;eliminate him from the waiting lists; or otherwise
 ;;mark him as unavailable.
@@ -130,8 +144,6 @@
               ctx waiting))
   ([ctx]
    (fill-services (store/get-entity ctx :waiting-list) ctx)))
-
-
 
 
 ;;Update Clients [notify clients of the passage of time, leading to
@@ -200,9 +212,12 @@
          (core/msg ">>>>>>>>>>>>>Ending time "
                        (core/get-time ctx) "<<<<<<<<<<<<<<") nil))))
 
+;;Simulation Step Function
+;;========================
 ;;note: the double-arity is to conform with the simulator
 ;;from spork.sim.history....we can probably look into changing
 ;;that in the near future.
+;;This is pretty generic
 (defn step
   ([ctx]
    (->> ctx
@@ -219,6 +234,10 @@
 
 ;;Simulation Control and Harnessing
 ;;=================================
+;;Creates an initial context for our simulation history,
+;;mainly provides the default behavior for entities to follow
+;;upon creation, and an initial batch of arrivals for scheduling.
+;;If no arrivals are provided, defaults to 10 at t = 1.
 (defn seed-ctx
   [& {:keys [initial-arrivals]
       :or {initial-arrivals {:n 10 :t 1}}}]
@@ -227,132 +246,34 @@
        (begin-t)
        (end-t)))
 
+;;This is using our step-function step, to simulate a random day at
+;;60 minutes * 8 hours / minute .
 (defn step-day
   ([seed] (history/state-stream seed
-              :tmax (* 60 8) :step-function step :keep-simulating? (fn [_] true)))
+                                :tmax (* 60 8)
+                                :step-function step
+                                :keep-simulating? (fn [_] true)))
   ([] (step-day (sim/advance-time (seed-ctx)))))
-;;Notes // Pending:
-;;Priority rules may be considered (we don't here).  It's first-come-first-serve
-;;priority right now.  Do they matter in practice?  Is there an actual
-;;triage process?
-
-;;History Queries
-;;===============
-
-(defn provider-trends [p]
-    #_(assert (<= #_util (services/utilization p) 1.0) (str ["utilization too high!" (services/utilization p) p]))
-  [(:name p)
-   {:utilization (core/float-trunc (services/utilization p) 2)
-    :clients (count (:clients p))
-    :capacity (:capacity p)}])
-
-;;Given a history, we can get data and trends from it...
-(defn frame->location-quantities [[t ctx]]
-  (->> (services/providers ctx)
-       (mapv provider-trends)
-       (into {})
-       (assoc {:t t}  :trends)))
-
-(defn derive-location [c]
-  (case (:location c)
-    "exit" (if (empty? (:service-plan c)) "complete" "exit")
-    
-    )
-  )
-(defn frame->clients [[t ctx]]
-  (->> (services/clients ctx)
-       (mapv #(hash-map :t t :location))))
 
 
-(def provider-order
-  ["VRC Waiting Area"
-   "VRC Reception Area"
-   "Chaplain Services"
-   "Army Substance Abuse Program"
-   
-   "Teaching Kitchen"
-   "Army Wellness Center"
-   "Comprehensive Soldier and Family Fitness Program"
-   "Nutritional Medicine"
-   "Health Promotion Operations"
+;;Simple Visualization Routines
+(defn samples [n]
+  (pmap  (fn [_] (vec (step-day
+                       (seed-ctx :initial-arrivals nil)))) (range n)))
 
-   "Military And Family Readiness Center"
-   "Army Public Health Nursing"])
-(def provider-colors
-  {"VRC Waiting Area" :dark-green
-   "VRC Reception Area" :green
-   "Chaplain Services"   :light-blue
-   "Army Substance Abuse Program" :red
-   
-   "Teaching Kitchen"  :yellow
-   "Army Wellness Center" :olive-drab
-   "Comprehensive Soldier and Family Fitness Program" :maroon
-   "Nutritional Medicine"  :gold
-   "Health Promotion Operations" :amber
 
-   "Military And Family Readiness Center" :dark-blue
-   "Army Public Health Nursing"   :light-orange
-   "completed" :sea-green
-   "exited" :black
-   })
-(defn location-quantities->chart [xs]
-  (-> (->>  (for [{:keys [t trends]} xs
-                  [provider {:keys [utilization]}] trends]
-              {:t t :utilization utilization :provider provider})
-            (i/dataset [:t :utilization :provider])
-            (i/$rollup :sum  :utilization [:t :provider]))
-      
-      (stacked/->stacked-area-chart  :row-field :t :col-field :provider
-                                     :values-field :utilization
-                                     :x-label "time (minutes)"
-                                     :y-label "Percent Utilization"
-                                     :tickwidth 60
-                                     :order-by (stacked/as-order-function  provider-order))))
+(defn client-quantities-view []
+  (->> (seed-ctx :initial-arrivals nil)
+       (step-day)
+       (map analysis/frame->clients)
+       (analysis/client-quantities->chart)
+       (i/view)))
 
-(defn client-quantities->chart [xs]
-  (-> (->>  (for [sample xs
-                  [loc gr] (group-by :location sample)]
-              {:t (:t (first gr)) :quantity (count gr) :location (or loc "empty")})
-            (i/dataset [:t :quantity :location])
-            (i/$rollup :sum  :quantity [:t :location]))
-      
-      (stacked/->stacked-area-chart  :row-field :t :col-field :location
-                                     :values-field :quantity
-                                     :title "Clients Located by Time"
-                                     :x-label "Time (minutes)"
-                                     :y-label "Quantity (clients)"
-                                     :tickwidth 60
-                                     :order-by (stacked/as-order-function  provider-order)
-                                     :color-by provider-colors)))
-
-;;show the distribution of provider utilization (across 1 or more replications)
-(defn h->utilizations [h]
-  (for [[gr xs] (group-by :provider
-                          (for [pm (map :trends (concat (map frame->location-quantities h)))
-                                [p m] (seq pm)]
-                            (assoc (select-keys m [:utilization]) :provider p)))]
-    [gr (map :utilization xs)]))
-
-(defn hs->mean-utilizations [hs]
-  (->> (for [h hs
-             [gr xs] (group-by :provider
-                               (for [pm (map :trends (concat (map frame->location-quantities h)))
-                                     [p m] (seq pm)]
-                                 (assoc (select-keys m [:utilization]) :provider p)))]
-         [gr (s/mean (map :utilization xs))])
-       (reduce (fn [acc [gr x]]
-                 (assoc acc gr (conj (get acc gr []) x)))
-               {} )))
-
-(defn utilization-plots
-  [m]
-  (let [the-plot
-        (let [[gr xs] (first m)]
-          (doto (c/box-plot  xs
-                             :legend true :x-label "" :y-label "Percent Utilization" :series-label gr :title "Utilization by Provider")))]
-    (doseq [[gr xs] (rest m)]
-      (c/add-box-plot the-plot xs :series-label gr))
-    the-plot))
+(defn mean-utilization-view [& {:keys [n] :or {n 30}}]
+  (->> (samples n)
+       (analysis/hs->mean-utilizations)
+       (analysis/utilization-plots)
+       (i/view)))
 
 (comment  ;testing
   (core/debugging!
@@ -376,20 +297,8 @@
      (def t3 (step t2))
      (def t4 (step t3))
      (def t5 (step t4))
-     )
-
-
-            
-            
-
-    (i/view (client-quantities->chart
-             (map frame->clients
-                  (step-day
-                   (seed-ctx :initial-arrivals nil)))))
-    
-    
-; (def asim (sim/advance-time isim1a))
-
-  )
+     ) 
+)
+  
 
 

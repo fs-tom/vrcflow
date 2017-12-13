@@ -17,6 +17,38 @@
                 :Original :boolean}})
    
 
+;;Trend preferences and Series Coloring (could be data!)
+;;======================================================
+(def provider-order
+  ["VRC Waiting Area"
+   "VRC Reception Area"
+   "Chaplain Services"
+   "Army Substance Abuse Program"
+   
+   "Teaching Kitchen"
+   "Army Wellness Center"
+   "Comprehensive Soldier and Family Fitness Program"
+   "Nutritional Medicine"
+   "Health Promotion Operations"
+
+   "Military And Family Readiness Center"
+   "Army Public Health Nursing"])
+(def provider-colors
+  {"VRC Waiting Area" :dark-green
+   "VRC Reception Area" :green
+   "Chaplain Services"   :light-blue
+   "Army Substance Abuse Program" :red
+   "Teaching Kitchen"  :yellow
+   "Army Wellness Center" :olive-drab
+   "Comprehensive Soldier and Family Fitness Program" :maroon
+   "Nutritional Medicine"  :gold
+   "Health Promotion Operations" :amber
+   "Military And Family Readiness Center" :dark-blue
+   "Army Public Health Nursing"   :light-orange
+   "completed" :sea-green
+   "exited" :black
+   })
+
 ;;Service Model - Drawn From Slides
 ;;=================================
 (def services
