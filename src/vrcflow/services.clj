@@ -103,6 +103,11 @@
 
 ;;A service is provided by someone.
 
+;;Services have associated functions for serving a client.
+;;This is a way to implement referrals, and subsequent
+;;complex processing chains.
+;;  Or explicit service chains.
+
 
 ;;How long do services take?
 ;;Need data...
@@ -173,8 +178,8 @@
             {} svcs->needs)))
 
 (defn service-tree [service-network]
-  (->> (keys (capacities basic-network))
-       (map #(into  [%] (graph/sinks basic-network %)))
+  (->> (keys (capacities service-network))
+       (map #(into  [%] (graph/sinks service-network %)))
        (reduce (fn [acc [k svc]]
                  (assoc acc k (conj (get acc k []) svc))) {})))
           
@@ -227,7 +232,7 @@
                (indicators basic-network))))
 
 ;;this is just a shim for generating needs.
-(defn random-needs
+(defn random-needs ;;called from behavior.
   ([] (random-needs 2))
   ([needs n]
    (reduce (fn [acc x]
@@ -330,7 +335,9 @@
            :wait-time wait-time} ctx))
 
 (defn allocate-provider
-  "Allocate the entity to the provider's service,"
+  "Allocate the entity to the provider's service.  If the provider
+   has a pre/post/service function associated, it will be applied to the
+   entity during allocation."
   [ctx provider svc id]
   (let [wait-time (service-time ctx provider svc)]
     (debug [:assigning id :to svc :for wait-time (dissoc (store/get-entity ctx id) :behavior)])
