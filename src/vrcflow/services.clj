@@ -208,6 +208,18 @@
 
 ;;In the db, we only have atomic services defined (at the moment....).
 
+;;We can either specify a composite service plan, or use referrals.
+;;probably just easier to specify referrals...
+;;Where do we define referrals?
+;;  There's some policy graph with transition probabilities.
+;;  This infers process definitions.
+;;  When an entity is processing, we can look to see if
+;;  there are defined transitions it should follow.
+;;  If so, that becomes the active need.
+
+
+
+
 
 ;;Screening/intake provides clients with a ServicePlan, initially
 ;;with a single Service.
@@ -358,6 +370,7 @@
          (core/msg "Entity " id " left " provider) nil)
        ))
 
+;;TODO: change this to include 
 ;;when a client is in waiting, we update the client...
 (defn waiting-service [ctx id]
   (-> ctx 
