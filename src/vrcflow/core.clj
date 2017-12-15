@@ -278,7 +278,7 @@
 (comment  ;testing
   (core/debugging!
    (def isim   (init (core/debug! emptysim) :initial-arrivals {:n 10 :t 1}
-                     :default-behavior client-beh))
+                     :default-behavior beh/client-beh))
     (def isim1  (-> isim (end-t) (begin-t))) #_(sim/advance-time isim)
     ;;arrivals happen
     (def isim1a (process-arrivals isim1))
@@ -291,7 +291,7 @@
 
     (core/debugging!
      (def isim   (init (core/debug! emptysim) :initial-arrivals {:n 10 :t 1}
-                       :default-behavior client-beh))
+                       :default-behavior beh/client-beh))
      (def t1 (step (end-t isim)))
      (def t2 (step t1))
      (def t3 (step t2))
