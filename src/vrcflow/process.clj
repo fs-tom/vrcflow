@@ -49,9 +49,12 @@
    :n    1
    :service :add-children} ;;unspecified branches will follow default rules.
   ;;Needs Assessment could be here, but it's covered by default...
-  {:name    "Begin Family Service"
+  {:name    "Begin Family Services"
    :type    :random-children ;;draw random-nth between 0 and (count) children
    :service :add-children    ;;add drawn children to the service plan.
+   :n       (fn [children]
+              (rand-int
+               (count children))) ;;uniform distribution for number of children selected.
    }
   ;;or we could use distributions...
   {:name "Needs Assessment"
@@ -62,7 +65,7 @@
    :service :add-children
    :n 1}])
 
-;;basic operations on processing nodes.
+;;basic oqperations on processing nodes.
 ;;So, the goal is to go from process graph, to processes, to services.
 ;;This then fits into our service model from VRCflow.  From there
 ;;we should be able to execute the sim like normal.
@@ -96,13 +99,23 @@
                   [chld chld])
                 (into (get ent :service-plan {})
                       )))))
+
+;;reset the sampler if we're sampling without replacements.
+(defn clear! [nd]
+  (when-let [f (some-> nd
+                       (meta)
+                       (:clear))]
+    (do (f) nd)))
+
 ;;sampling rules must be keywords in the corpus.
 ;;we can probably pre-process the corpus...
 (defn child-selector [xs n & {:keys [replacement?]}]
-  (cond (map? xs) (let [sampler  (->> (if replacement?
-                                        (s/->choice xs)
-                                        (s/->without-replacement xs))
-                                      (s/->replications n))
+  (cond (map? xs) (let [chooser (if replacement?
+                                  (s/->choice xs)
+                                  (s/->without-replacement xs))
+                        sampler  (->> chooser
+                                      (s/->replications n)
+                                      (s/->transform (fn [nd] (clear! chooser) nd)))
                         body (zipmap (keys xs) (keys xs))]
                     (fn []
                       (s/sample-from body sampler)))                     
@@ -113,28 +126,43 @@
           (cond (= maxn 1) (let [fst (first xs)]
                              (fn [] fst))
                 (= maxn n) (fn [] xs) ;;automatically selects all.
-                :else (let [sampler  (->> (if replacement?
-                                            (s/->choice xs)
-                                            (s/->without-replacement xs))
-                                          (s/->replications n))
+                :else (let [_       (println :blah)
+                            chooser (if replacement?
+                                      (s/->choice xs)
+                                      (s/->without-replacement xs))
+                            sampler  (->> chooser
+                                          (s/->replications n)
+                                          (s/->transform (fn [nd] (clear! chooser) nd)))
                             body (zipmap xs xs)]
                         (fn []
                           (s/sample-from body sampler)))))
           :else (throw (Exception.
                         (str [:unable-to-create-child-sampler!])))))
-                
-                 
+
+;;now we can define child selectors that sample without replacement
+;;or with replacement.  Our typical use case is without replacement
+;;though.
+
 ;;Process nodes basically define a self-named service that
 ;;  a) services entities by (typically) updating the service plan
-;;  b) the update to an entity is a function of 
-(defmulti process->service (fn [process-graph process]) (:type process))
-(defmethod process->service :random-children [pg {:keys [type n service weights]}]
-  (let [children  (g/get-sinks g)
-        select-children (case (count chi
+;;     to include the "next" service (or services)
+;;  b) the update service plan should reflect one or more
+;;     children, based on the following semantics:
+;;     1: If there's only one child, the next service is the child (easy).
+;;     2+:  Depending on the type of the node (specified where?) 
+;;
+
+(defmulti process->service (fn [process-graph process] (:type process)))
+(defmethod process->service :random-children [pg {:keys [name type n service weights]}]
+  (let [children  (g/sinks pg name)
+        select-children (case (count children)
+                          0 (throw (Exception. (str [:requires :at-least 1 :child])))
+                          (child-selector (or weights xs)
+                                 (cond (number? n) n
+                                       (fn? n) (n children)
+                                       :else (throw (Exception. (str [:n-must-be-number-or-fn]))))))
                           ]
     (case service
-      :add-children (add-children-as-services children ent)
-  )
-  
-  
+      :add-children (fn [ent] (add-children-as-services (select-children) ent))
+      (throw (Exception. (str [:not-implemented service]))))))
     
