@@ -6,10 +6,14 @@
 (ns vrcflow.process
   (:require [spork.util [table :as tbl]
                         [io :as io]
-                        [general :as gen]
+                        ;[general :as gen]
                         [sampling :as s]]
             [spork.util.excel [core :as xl]]
             [spork.cljgraph [core :as g] [io :as gio]]
+            ;;spec stuff
+            [clojure.spec.alpha :as spec]
+            [clojure.spec.gen.alpha :as gen]
+            [clojure.spec.test.alpha :as stest]
              ))
 
 ;;testing...
@@ -41,6 +45,22 @@
 ;;If the routing graph provides more than one child,
 ;;we MUST have a rule to determine which child(ren)
 ;;to add to the service plan.
+
+;;specifying processes for parsing.
+;;work on this later...
+(spec/def ::process-type #{:random-children})
+(spec/def ::service-type #{:add-children})
+(spec/def ::name (spec/or :keyword keyword?
+                          :string  string?))
+(spec/def ::posint pos-int?)
+(spec/def ::posfloat #(and  (double? %) (pos? %)))
+(spec/def ::num  (spec/or :zero zero? :int ::posint :float ::posfloat))
+(spec/def ::n (spec/or :function fn?
+                       :number ::num
+                       ))
+
+(spec/def ::weights (spec/map-of ::name ::n))
+                                 
 
 ;;Ex
 (def processes
@@ -160,7 +180,7 @@
                                                   :or {n 1}}]
   (let [children  (g/sinks pg name)
         selector (case (count children)
-                   0 (throw (Exception. (str [:requires :at-least 1 :child])))
+                   0 (throw (Exception. (str [proc :requires :at-least 1 :child])))
                    (child-selector (or weights children)
                                    (if (number? n) n 1)))
         select-children  (cond (number? n)
@@ -178,5 +198,10 @@
             :selector selector
             :children children})))
 
+;;once we have process services...
+;;we can define our service network.
 
-    
+(defn process-map [gr xs]
+  (into {} (for [x xs]
+             [(:name x) (if (= (:name x) :default) x
+                            (process->service gr x))])))
