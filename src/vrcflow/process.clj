@@ -107,18 +107,29 @@
                        (:clear))]
     (do (f) nd)))
 
+;;This is a combination 
+(defn ->batch-sampler [n nd]
+  (->> nd
+       (s/->replications n)
+       (s/->transform (fn [nd] (clear! nd) nd))))
+
+(defn select-by
+  [body sampler n]
+   (s/sample-from body (->> sampler
+                            (->batch-sampler n))))
+
 ;;sampling rules must be keywords in the corpus.
 ;;we can probably pre-process the corpus...
+;;rules get applied as functions to the context.
 (defn child-selector [xs n & {:keys [replacement?]}]
-  (cond (map? xs) (let [chooser (if replacement?
-                                  (s/->choice xs)
-                                  (s/->without-replacement xs))
-                        sampler  (->> chooser
-                                      (s/->replications n)
-                                      (s/->transform (fn [nd] (clear! chooser) nd)))
+  (cond (map? xs) (let [sampler  (->> (if replacement?
+                                        (s/->choice xs)
+                                        (s/->without-replacement xs))
+                                      )
                         body (zipmap (keys xs) (keys xs))]
-                    (fn []
-                      (s/sample-from body sampler)))                     
+                    (fn select
+                      ([]  (select-by body sampler n))
+                      ([k] (select-by body sampler k))))
         (seq xs)
         (let [childset   (set xs)
               maxn       (count childset)]
@@ -126,16 +137,14 @@
           (cond (= maxn 1) (let [fst (first xs)]
                              (fn [] fst))
                 (= maxn n) (fn [] xs) ;;automatically selects all.
-                :else (let [_       (println :blah)
-                            chooser (if replacement?
-                                      (s/->choice xs)
-                                      (s/->without-replacement xs))
-                            sampler  (->> chooser
-                                          (s/->replications n)
-                                          (s/->transform (fn [nd] (clear! chooser) nd)))
+                :else (let [sampler  (->> (if replacement?
+                                            (s/->choice xs)
+                                            (s/->without-replacement xs))
+                                          (->batch-sampler n))
                             body (zipmap xs xs)]
-                        (fn []
-                          (s/sample-from body sampler)))))
+                        (fn select
+                          ([]  (select-by body sampler n))
+                          ([k] (select-by body sampler k))))))
           :else (throw (Exception.
                         (str [:unable-to-create-child-sampler!])))))
 
@@ -155,13 +164,14 @@
 (defmulti process->service (fn [process-graph process] (:type process)))
 (defmethod process->service :random-children [pg {:keys [name type n service weights]}]
   (let [children  (g/sinks pg name)
-        select-children (case (count children)
-                          0 (throw (Exception. (str [:requires :at-least 1 :child])))
-                          (child-selector (or weights xs)
-                                 (cond (number? n) n
-                                       (fn? n) (n children)
-                                       :else (throw (Exception. (str [:n-must-be-number-or-fn]))))))
-                          ]
+        selector (case (count children)
+                   0 (throw (Exception. (str [:requires :at-least 1 :child])))
+                   (child-selector (or weights xs)
+                                   (if (number? n) n 1)))
+        select-children  (cond (number? n) (fn select-children [] (selector))
+                               (fn? n)     (fn select-children [] (selector (n)))
+                               :else (throw (Exception. (str [:n-must-be-number-or-noarg-fn]))))
+        ]
     (case service
       :add-children (fn [ent] (add-children-as-services (select-children) ent))
       (throw (Exception. (str [:not-implemented service]))))))
