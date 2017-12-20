@@ -60,7 +60,7 @@
   {:name "Needs Assessment"
    :type :random-children
    :weights {"Comprehensive Processing" 1  ;;draw children, according to CDF
-             "Standard Processing"      10 
+             "Standard Processing"      8 
              "Fast Track Processing"    1}
    :service :add-children
    :n 1}])
@@ -108,10 +108,10 @@
     (do (f) nd)))
 
 ;;This is a combination 
-(defn ->batch-sampler [n nd]
-  (->> nd
+(defn ->batch-sampler [n sampler]
+  (->> sampler
        (s/->replications n)
-       (s/->transform (fn [nd] (clear! nd) nd))))
+       (s/->transform (fn [nd] (clear! sampler) nd))))
 
 (defn select-by
   [body sampler n]
@@ -123,29 +123,24 @@
 ;;we can probably pre-process the corpus...
 ;;rules get applied as functions to the context.
 (defn child-selector [xs n & {:keys [replacement?]}]
-  (cond (map? xs) (let [sampler  (if replacement?
-                                   (s/->choice xs)
-                                   (s/->without-replacement xs))
-                        body (zipmap (keys xs) (keys xs))]
-                    (fn select
-                      ([]  (select-by body sampler n))
-                      ([k] (select-by body sampler k))))
-        (seq xs)
-        (let [childset   (set xs)
-              maxn       (count childset)]
-          (assert (<= n maxn) "Number of children selected must be <= total children!") 
-          (cond (= maxn 1) (let [fst (first xs)]
-                             (fn [] fst))
-                (= maxn n) (fn [] xs) ;;automatically selects all.
-                :else (let [sampler  (if replacement?
-                                       (s/->choice xs)
-                                       (s/->without-replacement xs))
-                            body (zipmap xs xs)]
-                        (fn select
-                          ([]  (select-by body sampler n))
-                          ([k] (select-by body sampler k))))))
-          :else (throw (Exception.
-                        (str [:unable-to-create-child-sampler!])))))
+  (let [sampler  (if replacement?
+                   (s/->choice xs)
+                   (s/->without-replacement xs))
+        body (if (map? xs)
+               (zipmap (keys xs) (keys xs))
+               (zipmap xs xs))
+        maxn  (count xs)
+        entries (if (map? xs) (vals xs) xs)
+        fst     (first entries)
+        _       (assert (<= n maxn) "Number of children selected must be <= total children!")]
+    (fn select
+      ([] (select-by body sampler n))
+      ([k]
+       (cond (= maxn 1 k) fst
+             (= maxn k)   entries ;;automatically selects all.
+             (< k maxn)   (select-by body sampler k)
+             :else (throw (Exception.
+                           "Number of children selected must be <= total children!")))))))
 
 ;;now we can define child selectors that sample without replacement
 ;;or with replacement.  Our typical use case is without replacement
