@@ -53,8 +53,8 @@
    :type    :random-children ;;draw random-nth between 0 and (count) children
    :service :add-children    ;;add drawn children to the service plan.
    :n       (fn [children]
-              (rand-int
-               (count children))) ;;uniform distribution for number of children selected.
+              (inc (rand-int
+                    (count children)))) ;;uniform distribution for number of children selected.
    }
   ;;or we could use distributions...
   {:name "Needs Assessment"
@@ -115,17 +115,17 @@
 
 (defn select-by
   [body sampler n]
-   (s/sample-from body (->> sampler
-                            (->batch-sampler n))))
+   (->> sampler
+        (->batch-sampler n)
+        (s/sample-from body)))
 
 ;;sampling rules must be keywords in the corpus.
 ;;we can probably pre-process the corpus...
 ;;rules get applied as functions to the context.
 (defn child-selector [xs n & {:keys [replacement?]}]
-  (cond (map? xs) (let [sampler  (->> (if replacement?
-                                        (s/->choice xs)
-                                        (s/->without-replacement xs))
-                                      )
+  (cond (map? xs) (let [sampler  (if replacement?
+                                   (s/->choice xs)
+                                   (s/->without-replacement xs))
                         body (zipmap (keys xs) (keys xs))]
                     (fn select
                       ([]  (select-by body sampler n))
@@ -137,10 +137,9 @@
           (cond (= maxn 1) (let [fst (first xs)]
                              (fn [] fst))
                 (= maxn n) (fn [] xs) ;;automatically selects all.
-                :else (let [sampler  (->> (if replacement?
-                                            (s/->choice xs)
-                                            (s/->without-replacement xs))
-                                          (->batch-sampler n))
+                :else (let [sampler  (if replacement?
+                                       (s/->choice xs)
+                                       (s/->without-replacement xs))
                             body (zipmap xs xs)]
                         (fn select
                           ([]  (select-by body sampler n))
@@ -162,17 +161,27 @@
 ;;
 
 (defmulti process->service (fn [process-graph process] (:type process)))
-(defmethod process->service :random-children [pg {:keys [name type n service weights]}]
+(defmethod process->service :random-children [pg {:keys [name type n service weights] :as proc
+                                                  :or {n 1}}]
   (let [children  (g/sinks pg name)
         selector (case (count children)
                    0 (throw (Exception. (str [:requires :at-least 1 :child])))
-                   (child-selector (or weights xs)
+                   (child-selector (or weights children)
                                    (if (number? n) n 1)))
-        select-children  (cond (number? n) (fn select-children [] (selector))
-                               (fn? n)     (fn select-children [] (selector (n)))
-                               :else (throw (Exception. (str [:n-must-be-number-or-noarg-fn]))))
+        select-children  (cond (number? n)
+                              (fn select-children [] (selector))
+                          (fn? n)
+                             (fn select-children [] (selector (n children)))
+                          :else (throw (Exception. (str [:n-must-be-number-or-one-arg-fn]))))
         ]
-    (case service
-      :add-children (fn [ent] (add-children-as-services (select-children) ent))
-      (throw (Exception. (str [:not-implemented service]))))))
+    (merge proc
+           {:on-service 
+            (case service ;;only have one type of service at the moment.
+              :add-children (fn [ent] (add-children-as-services (select-children) ent))
+              (throw (Exception. (str [:not-implemented service]))))
+            :select-children select-children
+            :selector selector
+            :children children})))
+
+
     
