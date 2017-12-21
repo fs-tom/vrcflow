@@ -10,6 +10,7 @@
                         [sampling :as s]]
             [spork.util.excel [core :as xl]]
             [spork.cljgraph [core :as g] [io :as gio]]
+            [vrcflow.services :as services]
             ;;spec stuff
             [clojure.spec.alpha :as spec]
             [clojure.spec.gen.alpha :as gen]
@@ -208,10 +209,12 @@
                             (process->service routing-graph x))])))
 
 
-(defn process-based-service-network [routing-graph proc-map]
-  (for [[from to w] (g/arc-seq rg)]
-    {:service from 
-  )
+(defn process-based-service-network [routing-graph caps proc-map]
+  (services/service-net
+   caps
+   (for [[from to w] (g/arc-seq routing-graph)]
+     {:Name from :Services to :Minutes (max w 1)})
+   nil))
 
 ;;so we have an entry for a default process in the process map.
 ;;Additionally, we have maps of processes, which have a :service
