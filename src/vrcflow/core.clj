@@ -73,6 +73,7 @@
            )))
   ([] (init emptysim)))
 
+;;remove entities marked for departure this time period.
 (defn process-departures [ctx]
   (->> (store/get-domain ctx :departure)
        (keys)
@@ -119,6 +120,12 @@
 ;;when we assign an entity to a service, we need to
 ;;eliminate him from the waiting lists; or otherwise
 ;;mark him as unavailable.
+;;Note:
+;;We have a new possibility with the advanced
+;;process model.  We may have transitive
+;;services that are 0-wait time.  When we allocate
+;;the provider for the service, we really want
+;;to flow the entity through available services.
 (defn assign-service [ctx svc ents provider-caps]
   (let [ents   (filterv (comp (partial services/service-eligible? svc)
                               #(store/get-entity ctx %))  ents)
@@ -180,7 +187,7 @@
              
       ctx)))                                                    
   
-;;Any entities unallocated entities are discharged, because by this point,
+;;Any unallocated entities are discharged, because by this point,
 ;;they should have been able to leave.
 (defn finalize-clients [ctx]
   (if-let [drops (seq (concat (services/not-allocated ctx)

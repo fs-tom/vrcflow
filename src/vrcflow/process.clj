@@ -61,8 +61,11 @@
 
 (spec/def ::weights (spec/map-of ::name ::n))
                                  
+(defn random-child-count [children]
+  (inc (rand-int
+        (count children))))
 
-;;Ex
+;;Sample processes.
 (def processes
  [{:type :random-children
    :name :default
@@ -70,11 +73,9 @@
    :service :add-children} ;;unspecified branches will follow default rules.
   ;;Needs Assessment could be here, but it's covered by default...
   {:name    "Begin Family Services"
-   :type    :random-children ;;draw random-nth between 0 and (count) children
-   :service :add-children    ;;add drawn children to the service plan.
-   :n       (fn [children]
-              (inc (rand-int
-                    (count children)))) ;;uniform distribution for number of children selected.
+   :type    :random-children   ;;draw random-nth between 0 and (count) children
+   :service :add-children      ;;add drawn children to the service plan.
+   :n       random-child-count ;;uniform distribution for number of children selected.
    }
   ;;or we could use distributions...
   {:name "Needs Assessment"
@@ -190,7 +191,7 @@
                           :else (throw (Exception. (str [:n-must-be-number-or-one-arg-fn]))))
         ]
     (merge proc
-           {:on-service 
+           {:end-service 
             (case service ;;only have one type of service at the moment.
               :add-children (fn [ent] (add-children-as-services (select-children) ent))
               (throw (Exception. (str [:not-implemented service]))))
@@ -201,7 +202,151 @@
 ;;once we have process services...
 ;;we can define our service network.
 
-(defn process-map [gr xs]
+(defn process-map [routing-graph xs]
   (into {} (for [x xs]
              [(:name x) (if (= (:name x) :default) x
-                            (process->service gr x))])))
+                            (process->service routing-graph x))])))
+
+
+(defn process-based-service-network [routing-graph proc-map]
+  (for [[from to w] (g/arc-seq rg)]
+    {:service from 
+  )
+
+;;so we have an entry for a default process in the process map.
+;;Additionally, we have maps of processes, which have a :service
+;;component and :on-service component.
+
+;;Our goal then is to use the process-map to turn the routing map into
+;;a service network, compatible with our service architecture.
+
+;;In the original simulation, the behavior dictated most elements.
+;;There's an entry point {:needs "Self Assessment"} (hardcoded at the
+;;moment) and no :service-plan.  The entity is driven to find a
+;;service plan and either get service, wait, or leave.
+
+;;So during get-service-plan behavior, a service plan is computed
+;;based on the needs of the entity (initially "Self Assessment"), and
+;;the service network [:parameters :service-network] defined in the
+;;entitystore.
+
+;;We need to hook into this or override it.  What we'd like is for the
+;;entity to consult a service network (that matches needs to
+;;services).  This lines up a proposed set of services to acquire.
+
+;;From there, the entity registers for service, and is either
+;;allocated or not as service providers are made available.
+
+;;So the entity's interest in services are decoupled from providing
+;;services.
+
+;;What we need to do is register these as providers.  A provider is
+;;any entity with a provider-entity component.
+
+;;So, processes can be providers...  we merely add an begin-service,
+;;end-service component(s) to them.
+
+;;The simplest process has an end-service, which adds some of its
+;;children to the service plan.  We basically bypass the
+;;"needs->service-plan" step and just add services directly.
+
+;;The needs and services are identical, so we add [child child] pairs
+;;to the service plan.
+
+;;So, when applying services, the entire pipeline for handling
+;;additional services is handled by the absence or presence of a
+;;[begin/end-service] components, which provide hooks to modify the
+;;service plan.
+
+;;We need to coerce the process-graph into a service network.  To do
+;;that, we need times for processes.  We have this information encoded
+;;in the routing graph.
+
+;;So...  We need Services [name label services minutes] Capacities
+;;[name label focus capacity]
+
+;;We can (and do) infer services from the routing graph.  Arcs
+;;indicate services.  Weights indicate minutes (or time in service).
+
+;;The implication here is that...  we can build a service network from
+;;a routing graph.  The routing graph encodes provider->service
+;;relations in its arcs.  The implication is that providers are also
+;;hosts for self-identified services.  Arc weights indicate processing
+;;time.
+
+;;When we go to get service, if the service entity has
+;;:begin/:end-service components, when that service is al/deallocated,
+;;the entity will have said servicing fn applied.
+
+;;We prime the processing narrative by creating a processing map,
+;;which reads the process definitions, and creates process entities
+;;that contain :end-service components.
+
+;;We create a service network from the routing graph.
+
+;;We then merge the entities defined by the process-map into the
+;;simulation context / entity store.
+
+;;Simulation now proceeds normally: Entities spawn, with an initial
+;;need [for now, ENTRY].  They fill this need by consulting the
+;;service network to create a service plan if one does not exist.  The
+;;only service for the ENTRY need is a similar named ENTRY service,
+;;which corresponds to the ENTRY node on the routing graph.
+
+;;The entity requests service for ENTRY, causing it to be advertised
+;;for service providers.
+
+;;Per the service network (defined by the nodes in the routing graph),
+;;ENTRY is the only node that provides the ENTRY service.
+
+;;Entity is assigned to the ENTRY provider, active service is ENTRY,
+;;and if [ENTRY begin-service] component exists, this function is
+;;applied to the entity and context updated.  (Perhaps we lift this to
+;;the messaging protocol, and allow the entity to determine how to
+;;proceed).
+
+;;ENTRY service takes 0 time.  Allocating the ENTRY provider to the
+;;ENTRY service.
+
+;;We assume (see digression) the every service has positive wait-time,
+;;thus we ensure that zero-wait edges are replaced by 1.
+
+;;So, entity is allocated to ENTRY for service, with a wait-time of 1.
+;;Time passes.  Next time step, entity is updated.  During
+;;update-entities system, entity is updated and goes through
+;;finish-service behavior.  finish-service invokes
+;;services/deallocate-provider.  This invokes the :end-service
+;;function component of the provider, altering entity's service plan
+;;accordingly.  So, entity's service-plan was {ENTRY ENTRY} with
+;;:active-service ENTRY.  During this step, :active-service is nil,
+;;service-plan is now {"JRPC Holding Area" "JRPC Holding Area"}
+
+
+
+;;Begin Digression
+;;[NOTE: we don't have 0 wait times in the original
+;;VRCflow setup.  We need to account for this somewhere...]  One way
+;;to look at 0-cost transitions is that a) capacity is meaningless
+;;since we're not waiting there.  b) they're just transitive
+;;references to services lower in the chain.  c) they're really
+;;services that take a minimum amount of time (say 1 minute).
+
+;;The easy cop-out here is to say the service is 1 minute long, or ms
+;;or whatever.  That ensures atomic progress.
+
+;;Or, we flatten-out all transitive services and map the transitive
+;;reference (the need) to the first relevant service, i.e.  a service
+;;with non-zero wait-time.
+
+;;Another interpretation is that the wait-time is not a constraint,
+;;but capacity is.  In this fashion, infinitessimal wait-times should
+;;allow entities to flow through on - to the outside obersever - the
+;;same whole-unit time step, although they're actually happening at
+;;infinitessimal intervals.
+
+;;This would allow us to record the flow of services/processes, i.e.
+;;all of the transitions visited.
+
+;;we'll cop-out for now, and assume minutes.
+;;If wait-time is 0, wait-time is 1 minute.
+;;End Digression

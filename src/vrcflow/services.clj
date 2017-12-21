@@ -348,7 +348,7 @@
 
 (defn allocate-provider
   "Allocate the entity to the provider's service.  If the provider
-   has a pre/post/service function associated, it will be applied to the
+   has a begin-service function associated, it will be applied to the
    entity during allocation."
   [ctx provider svc id]
   (let [wait-time (service-time ctx provider svc)]
@@ -362,7 +362,9 @@
          )))
 
 (defn deallocate-provider
-  "Allocate the entity to the provider's service,"
+  "Allocate the entity to the provider's service.  If the provider
+   has an end-service function associated, it will be applied
+   during deallocation."
   [ctx provider id]
   (debug [:removing id :from provider])
   (->> (drop-client provider id ctx)
