@@ -10,7 +10,7 @@
                         [sampling :as s]]
             [spork.util.excel [core :as xl]]
             [spork.cljgraph [core :as g] [io :as gio]]
-            [vrcflow.services :as services]
+            [vrcflow [services :as services] [data :as data]]
             ;;spec stuff
             [clojure.spec.alpha :as spec]
             [clojure.spec.gen.alpha :as gen]
@@ -216,6 +216,31 @@
      {:Name from :Services to :Minutes (max w 1)})
    nil))
 
+(defn records->routing-graph [xs & {:keys [default-weight]
+                                 :or {default-weight 1}}]
+  (->>  (for [{:keys [From To Weight Enabled]} (tbl/as-records xs)
+              :when Enabled]
+          [From To (if (and Weight (pos? Weight))
+                     Weight default-weight)]
+          )
+        (g/add-arcs g/empty-graph)))
+
+;;we use LONG/MAX_VALUE as a substitute for infinity.  Ensure
+;;that unconstrained nodes have max capacity.
+(defn records->capacities [xs]
+  (for [{:keys [Name Label Capacity] :as r} (tbl/as-records xs)]
+    (if-not (pos? Capacity)
+      (assoc r :Capacity Long/MAX_VALUE) ;;close to inf
+      r)))
+
+(comment ;testing
+  
+  (def psn (process-based-service-network
+            (records->routing-graph data/proc-routing-table)
+            (records->capacities    data/proc-cap-table)
+            (tbl/as-records      data/proc-processes-table)))
+  
+  )
 ;;so we have an entry for a default process in the process map.
 ;;Additionally, we have maps of processes, which have a :service
 ;;component and :on-service component.

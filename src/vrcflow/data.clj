@@ -8,13 +8,24 @@
               :Minutes  :long}
    :capacities {:Name     :text
                 :Label    :text
-                :Focus    :text
-                :Capacity :long}
+                ;:Focus    :text
+                :Capacity :long?}
    :prompts    {:Category :text
                 :Target :text
                 :Service  :text
                 :Recommended :text
-                :Original :boolean}})
+                :Original :boolean}
+   :processes {:Name    :text
+               :Type    :literal
+               :Service :literal
+               :N       :text
+               :Weights :clojure}
+   :routing {:Enabled :boolean
+             :From    :text
+             :To      :text
+             :Weight  :number
+             :Notes   :text
+             }})
    
 
 ;;Trend preferences and Series Coloring (could be data!)
@@ -140,10 +151,8 @@ Comprehensive Processing	Comprehensive Processing	1	MOS 42A
 Customs and Immigration	Customs and Immigration		
 DODS	DODS	2	Civ Pers
 ERC Holding Area	ERC Holding Area		
-Enter Family Services	Enter Family Services		
-Exit Family Services	Exit Family Services		
-Family Services	Family Services	2	Civ Pers
-Begin Family Services	Begin Family Services		
+Begin Family Services	Begin Family Services	2	Civ Pers
+End Family Services	End Family Services		
 Fast Track Processing	Fast Track Processing		
 Finance (Comprehensive Counseling)	Finance (Comprehensive Counseling)	1	MOS 42A
 HHS/State Services	HHS/State Services		
@@ -207,11 +216,14 @@ TRUE	Finance	CTO	5
 TRUE	ENTER	JRPC Holding Area	0	Annoted entry node for routing
 TRUE	Clearance	EXIT	0	Annoted exit node for routing")
 
-(def proc-rules
-  "Name	Type	Service	N	Weights
+(def proc-processes
+"Name	Type	Service	N	Weights
 :default	:random-children	:add-children	1	
 Begin Family Services	:random-children	:add-children	random-child-count	
-  Needs Assessment	:random-children	:add-children	1	\"{\"Comprehensive Processing\" 1,
- \"Standard Processing\" 8,
- \"Fast Track Processing\" 1}
-")
+Needs Assessment	:random-children	:add-children	1	{\"Comprehensive Processing\" 1,  \"Standard Processing\" 8,  \"Fast Track Processing\" 1}
+"
+)
+
+(def proc-routing-table   (tbl/tabdelimited->table proc-routing   :schema (:routing schemas)))
+(def proc-cap-table       (tbl/tabdelimited->table proc-caps :schema (:capacities schemas)))
+(def proc-processes-table (tbl/tabdelimited->table proc-processes :schema (:processes schemas)))
