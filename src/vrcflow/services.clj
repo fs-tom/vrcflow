@@ -267,6 +267,7 @@
          (store/mergee db :waiting-list))))
 
 ;;generate an update for itself the next time...
+;;next-batch now accepts a size
 (defn next-batch
   "Given a start time t, and an interarrival time
    function f::nil->number, generates a map of 
@@ -279,12 +280,38 @@
    (loop [dt (f)
           acc 1]
      (if (pos? dt)
-       {:n acc :t (+ dt t)} 
+       {:n acc :t (+ dt t)}
        (recur (f) (inc acc)))))
   ([t f b] (assoc (next-batch t f) :behavior b))
-  ([t f size b]
-   (assoc {:n (size) :t (+ t (f))} :behavior b)))
-  
+  ([t f size-f b]
+     (-> (loop [dt (f)
+                acc (size-f)]
+           (if (pos? dt)
+             {:n acc :t (+ dt t)}
+             (recur (f) (+ acc (size-f)))))
+         (assoc  :behavior b))))
+
+(comment
+  (defn test-sample []
+    (let [dist (spork.util.stats/exponential-dist 5)
+          f (fn [] (long (dist)))
+          size (spork.util.stats/triangle-dist 1 10 20) ;;better distribution...
+          s (fn [] (long (size)))
+          clck (atom 0)]
+    (for [i (range 100)]
+      (let [b (services/next-batch @clck  f s :blah)
+            _ (reset! clck (:t b))]
+        b))))
+
+  (def samples (reductions (fn [acc [n t]]
+                             {:t t :n n :total (+ n (:total acc))})
+                           {:t 0 :n 0 :total 0}
+                           (map (juxt :n :t) xs)))
+  (i/view (c/xy-plot (map :t samples) (map :total samples)))
+  ;;should give us about 1000 people/day
+  ;;where 480min/day * 1 arrival / 5 min = 96 arrivals/day
+  ;;96 arrivals/day * 10 entities/arrival  = 960 entities/day
+  )
 (defn batch->entities [{:keys [n t behavior] :as batch
                         :or {behavior (spork.ai.behavior/always-fail "no-behavior!")}}]
   (for [idx (range n)]

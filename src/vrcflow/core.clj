@@ -57,18 +57,29 @@
    batch of arrivals too.  If no inital arrivals are provided,
    generates an initial arrival batch based on the supplied
    distribution."
-  ([ctx & {:keys [default-behavior service-network initial-arrivals]
+  ([ctx & {:keys [default-behavior service-network initial-arrivals
+                  interarrival batch-size]
            :or {default-behavior beh/client-beh
-                service-network  services/basic-network}}]
-   (let [dist        (stats/exponential-dist 5)
-         f           (fn interarrival [] (long (dist)))]
-     (->>  ctx
-           (sim/merge-entity  {:arrival {:arrival-fn f}
+                service-network  services/basic-network
+                interarrival (stats/exponential-dist 5) 
+                batch-size 1}}]
+   (let [next-arrival (fn next-arrival [] (long (interarrival)))
+         next-size    (if (number? batch-size)
+                        (let [n (long batch-size)] (fn next-size [] n))
+                        (fn next-size    [] (long (batch-size))))
+         next-batch   (fn next-batch   [t]
+                          (services/next-batch t
+                           next-arrival next-size default-behavior))]
+     (->>  ctx 
+           (sim/merge-entity  {:arrival {:arrival-fn next-arrival
+                                         :batch-size next-size
+                                         :next-batch next-batch}
                                :parameters {:default-behavior default-behavior
                                             :service-network  service-network}})
            (services/schedule-arrivals
             (or initial-arrivals
-                (services/next-batch (sim/get-time ctx) f default-behavior)))
+                (next-batch (sim/get-time ctx)))
+              #_(services/next-batch (sim/get-time ctx) f default-behavior))
            (services/register-providers service-network)
            )))
   ([] (init emptysim)))
@@ -88,10 +99,11 @@
    (if-let [arrivals? (seq (sim/get-updates :arrival (sim/current-time ctx) ctx))]
      (let [_      (debug "[<<<<<<Processing Arrivals!>>>>>>]")
            arr    (store/get-entity ctx :arrival) ;;known entity arrivals...
-           {:keys [pending arrival-fn]}    arr
+           {:keys [pending arrival-fn next-batch]}    arr
            new-entities (batch->entities pending)
-           new-batch    (services/next-batch (:t pending) arrival-fn
-                                    (store/gete ctx :parameters :default-behavior))]
+           new-batch    (next-batch (:t pending))
+           #_(services/next-batch (:t pending) arrival-fn
+                                  (store/gete ctx :parameters :default-behavior))]
        (->> ctx
             (services/handle-arrivals (:t pending) new-entities)
             (services/schedule-arrivals new-batch)))
@@ -185,7 +197,7 @@
                          (store/dissoce acc :waiting-list svc))))
                         ctx wl))
              
-      ctx)))                                                    
+      ctx)))                                             
   
 ;;Any unallocated entities are discharged, because by this point,
 ;;they should have been able to leave.

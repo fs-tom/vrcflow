@@ -1,5 +1,6 @@
 (ns vrcflow.data
-  (:require [spork.util [table   :as tbl]]))
+  (:require [spork.util [table   :as tbl]
+             [stats :as stats :refer [exponential-dist triangle-dist]]]))
 
 (def schemas
   {:services {:Name     :text
@@ -25,7 +26,9 @@
              :To      :text
              :Weight  :number
              :Notes   :text
-             }})
+             }
+   :parameters {:Name  :literal
+                :Value :literal}})
    
 
 ;;Trend preferences and Series Coloring (could be data!)
@@ -233,9 +236,18 @@ Needs Assessment	:random-children	:add-children	1	{\"Comprehensive Processing\" 
 :seed	5555
 :default-wait-time	35
 :default-wait-location	\"Waiting\"
-:default-needs	#{\"ENTER\"}")
+:default-needs	#{\"ENTER\"}
+:default-interarrival	(exponential-dist 5)
+:default-batch-size	(triangle-dist 1 10 20)
+")
 
-(def proc-routing-table   (tbl/tabdelimited->table proc-routing   :schema (:routing schemas)))
+;;for now, we'll just have some defaults setup.
+(def proc-routing-table   (tbl/tabdelimited->table proc-routing   :schema (:routing    schemas)))
 (def proc-cap-table       (tbl/tabdelimited->table proc-caps      :schema (:capacities schemas)))
-(def proc-processes-table (tbl/tabdelimited->table proc-processes :schema (:processes schemas)))
-;(def proc-params-table (tbl/tabdelimited->table proc-params :schema (:params schemas)))
+(def proc-processes-table (tbl/tabdelimited->table proc-processes :schema (:processes  schemas)))
+(def proc-params-table    (tbl/tabdelimited->table proc-params    :schema (:parameters schemas)))
+;;i'm allowing exponential and triangular distributions...
+(def default-parameters   (->> proc-params-table
+                               (map (juxt :Name  :Value))
+                               (map (fn [[n v]]  [n (if (list? v) (eval v) v)]))
+                               (into {})))
