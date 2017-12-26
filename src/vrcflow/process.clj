@@ -194,7 +194,7 @@
     (merge proc
            {:end-service 
             (case service ;;only have one type of service at the moment.
-              :add-children (fn [ent] (add-children-as-services (select-children) ent))
+              :add-children (fn [ctx ent] (add-children-as-services (select-children) ent))
               (throw (Exception. (str [:not-implemented service]))))
             :select-children select-children
             :selector selector
@@ -239,6 +239,9 @@
             (records->routing-graph data/proc-routing-table)
             (records->capacities    data/proc-cap-table)
             (tbl/as-records      data/proc-processes-table)))
+
+  (defn process-ctx [ctx]
+    )
   
   )
 ;;so we have an entry for a default process in the process map.

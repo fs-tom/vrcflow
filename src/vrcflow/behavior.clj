@@ -103,13 +103,18 @@
   (alter-entity {:active-service nm}))  
 
 ;;enter/spawn behavior
+;;For VRC, we defaulted (hard coded) to "Self Assessment" as
+;;a need.  To generalize, we allow the store do define
+;;a default need (i.e., a place to start asking for service),
+;;from there we can instigate the entry process.
 (befn enter {:keys [entity ctx] :as benv}
   (when (:spawning? @entity)
     (->seq [reset-wait-time
             (echo (str [:client-arrived (:name @entity) :at (core/get-time @ctx)]))
             (->do (fn [_]
                     (swap! entity merge {:spawning? nil
-                                         :needs #{"Self Assessment"}})))])))
+                                         :needs (or (store/gete @ctx :parameters :default-needs)
+                                                    #{"Self Assessment"})})))])))
                    
 (defn set-active-service [svc]
   (->alter #(assoc % :active-service svc)))
@@ -137,6 +142,10 @@
 
 ;;Entities going through screening are able to compute their needs
 ;;and develop a service plan.
+;;Note: in the process-based model, we're ignoring this and never
+;;visit the screening service, which is what we originally
+;;hard coded into the VRC flow model.  We instead use the
+;;graph-transitions to determine our services.
 (befn screening {:keys [entity ctx] :as benv}
       (if (= (:active-service @entity) "Screening")
         (->seq [(echo "screening")

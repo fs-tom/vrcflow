@@ -159,7 +159,6 @@ HHS/State Services	HHS/State Services
 JRPC Holding Area	JRPC Holding Area	4	Mil Pers
 Legal	Legal	2	Civ Pers
 Luggage Holding Area	Luggage Holding Area	2	Mil Pers
-Mobilization/Deployment Support	Mobilization/Deployment Support		
 Move To Final Destination	Move To Final Destination		
 Movement to JRPC/ERPC	Movement to JRPC/ERPC	2	Mil Pers
 NTS Scan Point	NTS Scan Point	2	Mil Pers
@@ -172,7 +171,9 @@ Tricare	Tricare	2	Civ Pers
 Standard Processing	Standard Processing	2	MOS 42A
 Update Orders	Update Orders	2	MOS 42A
 Finance	Finance	2	MOS 42A
-CTO	CTO	6	CTO Reps")
+CTO	CTO	6	CTO Reps
+Waiting	Waiting		Default Wait State
+")
 
 (def proc-routing
   "Enabled	From	To	Weight	Notes
@@ -214,7 +215,10 @@ TRUE	Standard Processing	Update Orders	5
 TRUE	Update Orders	Finance	5	
 TRUE	Finance	CTO	5	
 TRUE	ENTER	JRPC Holding Area	0	Annoted entry node for routing
-TRUE	Clearance	EXIT	0	Annoted exit node for routing")
+TRUE	Clearance	EXIT	0	Annoted exit node for routing
+TRUE	WAIT	Waiting	0	Annoted exit node for waiting
+TRUE	Waiting	EXIT	35	Annoted exit node for wait time
+")
 
 (def proc-processes
 "Name	Type	Service	N	Weights
@@ -224,6 +228,14 @@ Needs Assessment	:random-children	:add-children	1	{\"Comprehensive Processing\" 
 "
 )
 
+(def proc-params
+"Name	Value
+:seed	5555
+:default-wait-time	35
+:default-wait-location	\"Waiting\"
+:default-needs	#{\"ENTER\"}")
+
 (def proc-routing-table   (tbl/tabdelimited->table proc-routing   :schema (:routing schemas)))
-(def proc-cap-table       (tbl/tabdelimited->table proc-caps :schema (:capacities schemas)))
+(def proc-cap-table       (tbl/tabdelimited->table proc-caps      :schema (:capacities schemas)))
 (def proc-processes-table (tbl/tabdelimited->table proc-processes :schema (:processes schemas)))
+;(def proc-params-table (tbl/tabdelimited->table proc-params :schema (:params schemas)))

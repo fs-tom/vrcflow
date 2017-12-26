@@ -4,7 +4,7 @@
     (:require
    [vrcflow [data :as data] [actor :as actor]]
    [spork.entitysystem.store :refer [defentity keyval->component] :as store]
-   [spork.util [table   :as tbl] [stats :as stats]]
+   [spork.util [table   :as tbl] [stats :as stats] [general :as gen]]
    [spork.sim  [core :as core] [simcontext :as sim] [history :as history]]
    [spork.ai   [behaviorcontext :as bctx] [behavior]
                [messaging :refer [send!! handle-message! ->msg]]
@@ -281,7 +281,9 @@
      (if (pos? dt)
        {:n acc :t (+ dt t)} 
        (recur (f) (inc acc)))))
-  ([t f b] (assoc (next-batch t f) :behavior b)))
+  ([t f b] (assoc (next-batch t f) :behavior b))
+  ([t f size b]
+   (assoc {:n (size) :t (+ t (f))} :behavior b)))
   
 (defn batch->entities [{:keys [n t behavior] :as batch
                         :or {behavior (spork.ai.behavior/always-fail "no-behavior!")}}]
@@ -346,6 +348,18 @@
           {:location provider
            :wait-time wait-time} ctx))
 
+(defn begin-service [provider id ctx]
+  (let [f (store/gete ctx provider :begin-service)]
+    (if-not f
+      ctx
+      (f ctx (store/get-entity ctx id)))))
+
+(defn end-service [provider id ctx]
+  (let [f (store/gete ctx provider :end-service)]
+    (if-not f
+      ctx
+      (f ctx (store/get-entity ctx id)))))
+
 (defn allocate-provider
   "Allocate the entity to the provider's service.  If the provider
    has a begin-service function associated, it will be applied to the
@@ -356,6 +370,7 @@
     (->> (store/mergee ctx id {:active-service svc :unoccupied false})
          (add-client provider id)
          (wait-at id provider wait-time)
+         (begin-service provider id)
          (sim/trigger-event :acquired-service id provider
            (core/msg "Entity " id " being served for "
                      svc " by " provider) nil)
@@ -367,16 +382,25 @@
    during deallocation."
   [ctx provider id]
   (debug [:removing id :from provider])
-  (->> (drop-client provider id ctx)
+  (->> (end-service provider id ctx)
+       (drop-client provider id)
        (sim/trigger-event :left-service id provider
          (core/msg "Entity " id " left " provider) nil)
        ))
+
+;;generalized from hardcoded VRC implementation.
+(def get-waiting-area
+  (gen/memo-1
+   (fn get-waiting-area [ctx]
+     (or (store/gete ctx :parameters :default-wait-location)
+         "VRC Waiting Area")
+     )))
 
 ;;TODO: change this to include 
 ;;when a client is in waiting, we update the client...
 (defn waiting-service [ctx id]
   (-> ctx 
-      (allocate-provider  "VRC Waiting Area" "Waiting" id)
+      (allocate-provider  (get-waiting-area ctx) #_"VRC Waiting Area" "Waiting" id)
       (store/assoce id :unoccupied true)))
 
 (defn needs-service?
