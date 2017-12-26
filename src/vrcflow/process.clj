@@ -9,6 +9,7 @@
                         ;[general :as gen]
                         [sampling :as s]]
             [spork.sim [core :as core]]
+            [spork.entitysystem.store :as store]
             [spork.util.excel [core :as xl]]
             [spork.cljgraph [core :as g] [io :as gio]]
             [vrcflow [core :as vrc] [services :as services] [data :as data] [behavior :as beh]]
@@ -64,13 +65,12 @@
 (spec/def ::weights (spec/map-of ::name ::n))
                                  
 (defn random-child-count [children]
-  (inc (rand-int
-        (count children))))
+  (inc (rand-int (count children))))
 
 ;;Sample processes.
 (def processes
  [{:type :random-children
-   :name :default
+   :name :default-process
    :n    1
    :service :add-children} ;;unspecified branches will follow default rules.
   ;;Needs Assessment could be here, but it's covered by default...
@@ -178,37 +178,44 @@
 ;;     2+:  Depending on the type of the node (specified where?) 
 ;;
 
+(defn resolve-n [selector children n]
+  (cond (number? n) (fn select-children [] (selector))
+        (fn? n)     (fn select-children [] (selector (n children)))
+        (symbol? n)  (try (resolve-n selector children @(ns-resolve *ns* n))
+                          (catch Exception e (do (println [:failed-to-find-symbol n])
+                                                 (throw e))))
+                                                 
+        :else (throw (Exception. (str [:n-must-be-number-or-one-arg-fn n])))))
+  
 (defmulti process->service (fn [process-graph process] (:type process)))
 (defmethod process->service :random-children [pg {:keys [name type n service weights] :as proc
                                                   :or {n 1}}]
-  (let [children  (g/sinks pg name)
-        selector (case (count children)
-                   0 (throw (Exception. (str [proc :requires :at-least 1 :child])))
-                   (child-selector (or weights children)
-                                   (if (number? n) n 1)))
-        select-children  (cond (number? n)
-                              (fn select-children [] (selector))
-                          (fn? n)
-                             (fn select-children [] (selector (n children)))
-                          :else (throw (Exception. (str [:n-must-be-number-or-one-arg-fn]))))
-        ]
-    (merge proc
-           {:end-service 
-            (case service ;;only have one type of service at the moment.
-              :add-children (fn [ctx ent] (add-children-as-services (select-children) ent))
-              (throw (Exception. (str [:not-implemented service]))))
-            :select-children select-children
-            :selector selector
-            :children children})))
+  (if (= name :default-process)
+    proc
+    (let [children  (g/sinks pg name)
+          selector (case (count children)
+                     0 (throw (Exception. (str [proc :requires :at-least 1 :child])))
+                     (child-selector (or weights children)
+                                     (if (number? n) n 1)))
+          select-children  (resolve-n selector children n)
+          ]
+      (merge proc
+             {:end-service 
+              (case service ;;only have one type of service at the moment.
+                :add-children (fn [ctx ent]
+                                (store/add-entity ctx
+                                                  (add-children-as-services (select-children) ent)))
+                (throw (Exception. (str [:not-implemented service]))))
+              :select-children select-children
+              :selector selector
+              :children children}))))
 
 ;;once we have process services...
 ;;we can define our service network.
-
 (defn process-map [routing-graph xs]
   (into {} (for [x xs]
-             [(:name x) (if (= (:name x) :default) x
+             [(:name x) (if (= (:name x) :default-process) x
                             (process->service routing-graph x))])))
-
 
 (defn process-based-service-network [routing-graph caps proc-map]
   (services/service-net
@@ -234,30 +241,45 @@
       (assoc r :Capacity Long/MAX_VALUE) ;;close to inf
       r)))
 
+(defn merge-processes [proc-map ctx]
+  (reduce-kv (fn [acc id e]
+               (store/mergee acc id e))
+             ctx proc-map))
+
 (comment ;testing
-  
+  (def rg (records->routing-graph data/proc-routing-table))
+  (def caps (records->capacities    data/proc-cap-table))
   (def psn (process-based-service-network
-            (records->routing-graph data/proc-routing-table)
-            (records->capacities    data/proc-cap-table)
-            (tbl/as-records         data/proc-processes-table)))
+            rg
+            caps
+            nil #_(tbl/as-records         data/proc-processes-table)))
+  
+  ;;we're basically building up a map of services...
+  (def pm (process-map rg
+                       (for [r (tbl/as-records  data/proc-processes-table)]
+                         (reduce-kv (fn [acc k v]
+                                      (assoc acc
+                                             (keyword (clojure.string/lower-case (name k))) v))
+                                    {} r))))
   ;;we'd like to move from this eventually...
   (defn proc-seed-ctx
-    [& {:keys [initial-arrivals]
-        :or {initial-arrivals {:n 10 :t 1}} :as opts}]
+    [& {:keys [initial-arrivals service-network]
+        :or {initial-arrivals {:n 10 :t 1}
+             service-network  psn} :as opts}]
     (let [{:keys [;default-behavior
                   default-interarrival
                   default-batch-size]} data/default-parameters]
 
       (->> (vrc/init (core/debug! vrc/emptysim) :initial-arrivals initial-arrivals
                      :default-behavior beh/client-beh
-                     :service-network psn
-                     :interarrival   default-interarrival
-                     :batch-size     default-batch-size)
+                     :service-network service-network
+                     :interarrival    default-interarrival
+                     :batch-size      default-batch-size)
+           (merge-processes pm)
            (vrc/begin-t)
            (vrc/end-t))))
   
   (defn process-ctx [ctx]
-    
     )
   
   )
