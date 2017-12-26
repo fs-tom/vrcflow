@@ -241,10 +241,40 @@
       (assoc r :Capacity Long/MAX_VALUE) ;;close to inf
       r)))
 
+;;using a baked default for now...
+(defn as-default-process [service-network nd]
+  (when-let [children (g/sinks (store/gete ctx :parameters :service-network) nd)]
+    (let [selector (if (> (count children) 1)
+                     #(vector (rand-nth children))
+                     (let [c (first children)
+                           xs [c]]
+                       (fn [] xs)))]
+      {:end-service 
+       (fn single-child [ctx ent]
+         (store/add-entity ctx
+                           (add-children-as-services (selector) ent)))
+       :children children
+       :selector selector})))
+
+;;if we have a :default-process, we'll go ahead and
+;;pull it out as the default-process template, and use
+;;that to define basic processes for every service
+;;that doesn't have a proc..
 (defn merge-processes [proc-map ctx]
   (reduce-kv (fn [acc id e]
                (store/mergee acc id e))
              ctx proc-map))
+
+(defn merge-default-processes [proc-map ctx]
+  (if-let [default (get proc-map :default-process)]
+    (let [sn (services/service-network ctx)]
+      (->> (for [p (services/providers ctx)
+                 :when (not (:end-service p))]
+             [(:name p) (as-default-process sn (:name p))])
+           (reduce (fn [acc [id xs]]
+                     (store/mergee acc id xs))
+                   ctx)))
+    ctx))
 
 (comment ;testing
   (def rg (records->routing-graph data/proc-routing-table))
@@ -276,6 +306,7 @@
                      :interarrival    default-interarrival
                      :batch-size      default-batch-size)
            (merge-processes pm)
+           (merge-default-processes pm)
            (vrc/begin-t)
            (vrc/end-t))))
   
