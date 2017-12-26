@@ -8,9 +8,10 @@
                         [io :as io]
                         ;[general :as gen]
                         [sampling :as s]]
+            [spork.sim [core :as core]]
             [spork.util.excel [core :as xl]]
             [spork.cljgraph [core :as g] [io :as gio]]
-            [vrcflow [services :as services] [data :as data]]
+            [vrcflow [core :as vrc] [services :as services] [data :as data] [behavior :as beh]]
             ;;spec stuff
             [clojure.spec.alpha :as spec]
             [clojure.spec.gen.alpha :as gen]
@@ -238,8 +239,23 @@
   (def psn (process-based-service-network
             (records->routing-graph data/proc-routing-table)
             (records->capacities    data/proc-cap-table)
-            (tbl/as-records      data/proc-processes-table)))
+            (tbl/as-records         data/proc-processes-table)))
+  ;;we'd like to move from this eventually...
+  (defn proc-seed-ctx
+    [& {:keys [initial-arrivals]
+        :or {initial-arrivals {:n 10 :t 1}} :as opts}]
+    (let [{:keys [;default-behavior
+                  default-interarrival
+                  default-batch-size]} data/default-parameters]
 
+      (->> (vrc/init (core/debug! vrc/emptysim) :initial-arrivals initial-arrivals
+                     :default-behavior beh/client-beh
+                     :service-network psn
+                     :interarrival   default-interarrival
+                     :batch-size     default-batch-size)
+           (vrc/begin-t)
+           (vrc/end-t))))
+  
   (defn process-ctx [ctx]
     
     )

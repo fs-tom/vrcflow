@@ -211,7 +211,7 @@ TRUE	Tricare	End Family Services	0	This is another service network
 TRUE	DODS	End Family Services	0	This is another service network
 TRUE	End Family Services	CTO	0	Exits service network
 TRUE	CTO	Clearance	10	
-TRUE	Clearance	Luggage Holding Area	0	
+FALSE	Clearance	Luggage Holding Area	0	Dropped to eliminate cycle
 TRUE	ERC Holding Area	HHS/State Services	0	
 TRUE	HHS/State Services	Clearance	0	
 TRUE	Standard Processing	Update Orders	5	
@@ -247,7 +247,6 @@ Needs Assessment	:random-children	:add-children	1	{\"Comprehensive Processing\" 
 (def proc-processes-table (tbl/tabdelimited->table proc-processes :schema (:processes  schemas)))
 (def proc-params-table    (tbl/tabdelimited->table proc-params    :schema (:parameters schemas)))
 ;;i'm allowing exponential and triangular distributions...
-(def default-parameters   (->> proc-params-table
-                               (map (juxt :Name  :Value))
-                               (map (fn [[n v]]  [n (if (list? v) (eval v) v)]))
-                               (into {})))
+(def default-parameters   (into {} (comp (map (juxt :Name  :Value))
+                                         (map (fn [[n v]]  [n (if (list? v) (eval v) v)])))
+                                proc-params-table))
