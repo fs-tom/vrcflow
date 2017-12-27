@@ -202,7 +202,7 @@
       (merge proc
              {:end-service 
               (case service ;;only have one type of service at the moment.
-                :add-children (fn [ctx ent]
+                :add-children (fn add-children [ctx ent]
                                 (store/add-entity ctx
                                                   (add-children-as-services (select-children) ent)))
                 (throw (Exception. (str [:not-implemented service]))))
@@ -221,11 +221,11 @@
   (services/service-net
    caps
    (for [[from to w] (g/arc-seq routing-graph)]
-     {:Name from :Services to :Minutes (max w 1)})
+     {:Name from :Services to :Minutes w #_(max w 1)})
    nil))
 
 (defn records->routing-graph [xs & {:keys [default-weight]
-                                 :or {default-weight 1}}]
+                                 :or {default-weight 0}}]
   (->>  (for [{:keys [From To Weight Enabled]} (tbl/as-records xs)
               :when Enabled]
           [From To (if (and Weight (pos? Weight))
@@ -293,12 +293,13 @@
                                     {} r))))
   ;;we'd like to move from this eventually...
   (defn proc-seed-ctx
-    [& {:keys [initial-arrivals service-network]
+    [& {:keys [initial-arrivals service-network parameters]
         :or {initial-arrivals {:n 10 :t 1}
-             service-network  psn} :as opts}]
+             service-network  psn
+             parameters data/default-parameters} :as opts}]
     (let [{:keys [;default-behavior
                   default-interarrival
-                  default-batch-size]} data/default-parameters]
+                  default-batch-size]} parameters]
 
       (->> (vrc/init (core/debug! vrc/emptysim) :initial-arrivals initial-arrivals
                      :default-behavior beh/client-beh
@@ -307,11 +308,26 @@
                      :batch-size      default-batch-size)
            (merge-processes pm)
            (merge-default-processes pm)
+           (core/merge-entity {:parameters parameters})
            (vrc/begin-t)
            (vrc/end-t))))
   
   (defn process-ctx [ctx]
     )
+
+  (defn processes [ctx] (store/get-domain ctx :end-service))
+  (defn parameters [ctx] (store/get-entity ctx :parameters))
+  (defn default-needs [ctx] (-> ctx parameters :default-needs))
+  ;;we should be able to simulate an entire entity's lifecycle
+  ;;by walking services...
+  (defn random-services [init-need procmap]
+    ;;from an initial need, we're basically walking the service network.
+    ;;
+    (when-let [f (get procmap init-need)]
+      (lazy-seq
+       (concat (f) (random-services 
+                    )))))
+  
   
   )
 ;;so we have an entry for a default process in the process map.
@@ -451,3 +467,86 @@
 ;;we'll cop-out for now, and assume minutes.
 ;;If wait-time is 0, wait-time is 1 minute.
 ;;End Digression
+
+;;Additional notes on service plans: We need the ability to define the
+;;notion of lexically scoped service plans, or active plans.  As we
+;;walk the service network, we may run into nodes that create a new
+;;service context.  Much like 'eval,' we have a new process node that
+;;requires us to traverse the children - for some definition of
+;;traversal - during which all other concerns are moot.  This notion
+;;of priority, or exclusion of other concerns, is similar to the
+;;stack-based goal hierarchy from AI.  We're basically in a higher
+;;behavior context, pursuing an immediate set of goals, and we'd like
+;;to revert back to the outer context of pre-set goals when we're
+;;done.
+
+;;so, the initial notion of a service plan - really a mapping of
+;;services (or goals) to needs, implies a specicif type of goal-based
+;;behavior.  The entity is pursuing an an arbitrary number of goals
+;;concurrently, trying to find the next available goal.  There is no
+;;priority, or dependence between the goals.
+
+;;Our more advanced context has us defining composite goals: that is,
+;;pursuing a goal may imply accomplishing several other sub-goals
+;;(i.e., getting a set of services).  These sub-goals may beget
+;;additional sub-goals.
+
+;;In the service network parlance, we have a parent process the
+;;defines its service as adding a new service plan with one or more
+;;children.  This service plan becomes the "active" plan, in which
+;;case the services are completed Once the active service plan (the
+;;current goals) are completed, we can revert to the outer plan...  If
+;;there is no outermost plan, we are done with service.
+
+;;We should be able to communicate a priority of service plans by have
+;;a stack (or list) of plans.  The active plan is the head of the
+;;list.  If there is no active plan, there is no service.
+
+;;When a process is entered, it may now alter the service plan by
+;;pushing a new plan.
+
+;;The motivating example is for the "family services" process: it adds
+;;"end family services" to the service plan, and then pushes a new
+;;active plan onto the stack.  The new plan is composed of one or more
+;;child nodes.
+
+;;So, traversing our composite or "group" node boils down to pushing
+;;the "end" onto the plan stack, then pushing a map of child services
+;;onto the active plan.
+
+;;We encode groupings like this:
+;;  The children of a [begin ?]
+;;  should be parents of [end ?]
+;;In this case
+;; [begin family-services]
+;;  child1 child2 child3
+;; [end family-services]
+;;denotes a group.
+
+;;Can we have sub-groups?
+;; [begin family-services]
+;;  [begin child1] child2 child3
+;;  child a
+;;  [end child1]
+;; [end family-services]
+;;So, original rules hold
+;;iff the child is not indicative
+;;of a compound node, (i.e.
+;;an operation with a matching pair).
+
+;;If any child is a compound node, we'd
+;;be able to process its children
+;;recursively.
+
+;;tree::
+;;  leaf x |
+;;  [begin y]
+;;  tree+
+;;  [end y]
+
+;;If we have operators, embedded in
+;;the node label, then we can
+;;identify these nodes easily.
+;;Conversely, we can parse them
+;;from a simple DSL instead of
+;;having to define the graphs.

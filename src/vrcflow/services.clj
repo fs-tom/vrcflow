@@ -50,8 +50,39 @@
 (defn providers [db] (store/select-entities db :from :provider-entity))
 (defn active-providers [db] (filter (comp seq :clients) (providers db)))
 (defn service-time [db provider svc]
-  (graph/arc-weight (service-network db) provider svc))
-    
+  (graph/arc-weight (service-network db) provider svc))    
+;;Update:
+;;We need to be able to push service plans.
+;;We'll add a component: :plan-stack
+;;:service-plan is logically the head of the stack,
+;;and is not "stored" there.
+;;We'll define operations.
+(defn push-plan
+  "Establishes a new service plan as the top
+   of the plan stack.  Moves any extant service-plan
+   to the plan-stack for later retrieval."
+  [db id plan]
+  (if (empty? (store/gete db id :service-plan))
+    (store/assoce db id :service-plan plan)
+    (-> db
+        (store/assoce id :plan-stack
+           (conj (or (store/gete db id :plan-stack) '())
+                 (store/gete db id :service-plan)))
+        (store/assoce id :service-plan plan))))
+
+(defn pop-plan
+  "Examines the plan-stack, setting the first plan
+   as the service-plan and removing it from the plan-stack."
+  [db id]
+  (if-let [ps (some-> db (store/gete id :plan-stack) seq)]
+    (-> db
+        (store/assoce id :plan-stack (pop ps))
+        (store/assoce id :service-plan (first ps)))
+    db))
+
+(defn service-remaining? [db id]
+  (or  (not (empty? (store/gete db id :service-plan)))
+       (not (empty? (store/gete db id :plan-stack)))))
 
 ;;So, service-providers can serve up to capacity clients....
 ;;When a client is undergoing a service, it consumes
