@@ -124,15 +124,33 @@
               (->do (fn [_] (swap! entity assoc :departure tupdate)))]
       ))
 
+(defn find-plan [ent]
+  (when-let [ps (seq (get ent :plan-stack))]
+    (loop  [x (first ps)
+            xs (rest ps)]
+      (if (and x (pos? (count x)))
+        {:service-plan x
+         :plan-stack xs}
+        (when xs 
+          (recur (first xs) (rest xs)))))))
+
 ;;Prepare the entity's service plan based off of its needs.
 ;;If it already has one, we're done.
+;;Note: to update this with our process-model, we
+;;now have the potential of a plan-stack.  That is,
+;;if the active plan is empty, we check to see
+;;if there are pending service plans via find-plan.
 (befn get-service-plan {:keys [entity ctx] :as benv}
   (let [ent  @entity]
     (if-let  [plan (:service-plan ent)]
       (if (pos? (count plan))
         (echo (str (:name ent) " has a service plan"))
-        (->seq [(echo (str (:name ent) " completed service plan!"))                
-                set-departure]))
+        (if-let [res (find-plan ent)]
+          (->seq [(echo (str (:name ent) " popped a pending service plan!"))
+                  ;;update the service plan and plan-stack
+                  (->do (fn [_] (swap! entity merge res)))])
+          (->seq [(echo (str (:name ent) " completed service plan!"))
+                  set-departure])))
       (let [_    (debug (str "computing service plan for "
                              (select-keys ent [:name :needs])))
             net  (store/gete @ctx :parameters :service-network)

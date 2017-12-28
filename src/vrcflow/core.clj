@@ -274,7 +274,6 @@
                                 :keep-simulating? (fn [_] true)))
   ([] (step-day (sim/advance-time (seed-ctx)))))
 
-
 ;;Simple Visualization Routines
 (defn samples [n]
   (pmap  (fn [_] (vec (step-day

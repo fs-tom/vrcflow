@@ -202,9 +202,11 @@
       (merge proc
              {:end-service 
               (case service ;;only have one type of service at the moment.
-                :add-children (fn add-children [ctx ent]
-                                (store/add-entity ctx
-                                                  (add-children-as-services (select-children) ent)))
+                :add-children (fn add-children
+                                ([ctx ent]
+                                 (store/add-entity ctx
+                                                   (add-children-as-services (select-children) ent)))
+                                ([ent] (add-children-as-services (select-children) ent)))
                 (throw (Exception. (str [:not-implemented service]))))
               :select-children select-children
               :selector selector
@@ -243,16 +245,18 @@
 
 ;;using a baked default for now...
 (defn as-default-process [service-network nd]
-  (when-let [children (g/sinks (store/gete ctx :parameters :service-network) nd)]
+  (when-let [children (g/sinks service-network nd)]
     (let [selector (if (> (count children) 1)
                      #(vector (rand-nth children))
                      (let [c (first children)
                            xs [c]]
                        (fn [] xs)))]
       {:end-service 
-       (fn single-child [ctx ent]
-         (store/add-entity ctx
-                           (add-children-as-services (selector) ent)))
+       (fn single-child
+         ([ctx ent]
+          (store/add-entity ctx
+                            (add-children-as-services (selector) ent)))
+         ([ent] (add-children-as-services (selector) ent)))
        :children children
        :selector selector})))
 
@@ -265,17 +269,38 @@
                (store/mergee acc id e))
              ctx proc-map))
 
+;;extract need/services from the ctx
+;;that are no explicitly accounted for
+;;in the proc-map
+(defn extra-providers [proc-map sn]
+  (into [] (filter (fn [nd] (and (not= nd :provider) (not (proc-map nd)))))
+        (keys (g/nodes sn))))
+;;we need to capture the entire process network.
+;;that means nodes that aren't providers.
 (defn merge-default-processes [proc-map ctx]
   (if-let [default (get proc-map :default-process)]
     (let [sn (services/service-network ctx)]
       (->> (for [p (services/providers ctx)
                  :when (not (:end-service p))]
-             [(:name p) (as-default-process sn (:name p))])
+                 [(:name p) (as-default-process sn (:name p))])
            (reduce (fn [acc [id xs]]
                      (store/mergee acc id xs))
                    ctx)))
     ctx))
-
+;;we need to define providers as servicing their names...
+;;This is really a hacky work around at the moment.
+(defn redefine-providers [proc-map sn ctx]
+  (as-> (services/providers ctx) it
+    (reduce (fn [acc e]
+              (store/assoce acc (:name e)
+                            :services [(:name e)]))
+            ctx it)
+    (reduce (fn [acc id]
+              (store/add-entity acc
+                                (services/provider id :services [id]
+                                                   :capacity Long/MAX_VALUE)))
+            it (extra-providers proc-map sn))))
+  
 (comment ;testing
   (def rg (records->routing-graph data/proc-routing-table))
   (def caps (records->capacities    data/proc-cap-table))
@@ -307,6 +332,7 @@
                      :interarrival    default-interarrival
                      :batch-size      default-batch-size)
            (merge-processes pm)
+           (redefine-providers pm service-network)
            (merge-default-processes pm)
            (core/merge-entity {:parameters parameters})
            (vrc/begin-t)
@@ -318,11 +344,19 @@
   (defn processes [ctx] (store/get-domain ctx :end-service))
   (defn parameters [ctx] (store/get-entity ctx :parameters))
   (defn default-needs [ctx] (-> ctx parameters :default-needs))
+  ;;so...the original service network mapped services to leaf nodes,
+  ;;which were needs.  We're encoding things differently in the
+  ;;process network.  The service and needs are identical, so
+  ;;they correspond to nodes on the network.
+  ;;We'll basically traverse the service network until we
+  ;;find a non-zero cost need/service.  
+    
   ;;we should be able to simulate an entire entity's lifecycle
   ;;by walking services...
+  ;;Walking a service implies invoking the selector and adding
+  ;;children to an entity.
   (defn random-services [init-need procmap]
     ;;from an initial need, we're basically walking the service network.
-    ;;
     (when-let [f (get procmap init-need)]
       (lazy-seq
        (concat (f) (random-services 

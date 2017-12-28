@@ -60,29 +60,52 @@
 (defn push-plan
   "Establishes a new service plan as the top
    of the plan stack.  Moves any extant service-plan
-   to the plan-stack for later retrieval."
-  [db id plan]
-  (if (empty? (store/gete db id :service-plan))
-    (store/assoce db id :service-plan plan)
-    (-> db
-        (store/assoce id :plan-stack
-           (conj (or (store/gete db id :plan-stack) '())
-                 (store/gete db id :service-plan)))
-        (store/assoce id :service-plan plan))))
+   to the plan-stack for later retrieval. Two-arg
+   version works on entity maps."
+  ([db id plan]
+   (if (empty? (store/gete db id :service-plan))
+     (store/assoce db id :service-plan plan)
+     (-> db
+         (store/assoce id :plan-stack
+                       (conj (or (store/gete db id :plan-stack) '())
+                             (store/gete db id :service-plan)))
+         (store/assoce id :service-plan plan))))
+  ([ent plan]
+   (if (empty? (get ent :service-plan))
+     (assoc ent :service-plan plan)
+     (-> ent
+         (assoc :plan-stack
+                       (conj (or (get ent :plan-stack) '())
+                             (get ent :service-plan)))
+         (assoc :service-plan plan)))))
 
 (defn pop-plan
   "Examines the plan-stack, setting the first plan
-   as the service-plan and removing it from the plan-stack."
-  [db id]
-  (if-let [ps (some-> db (store/gete id :plan-stack) seq)]
-    (-> db
-        (store/assoce id :plan-stack (pop ps))
-        (store/assoce id :service-plan (first ps)))
-    db))
+   as the service-plan and removing it from the plan-stack.
+   Two-arg version works on entity maps."
+  ([db id]
+   (if-let [ps (some-> db (store/gete id :plan-stack) seq)]
+     (-> db
+         (store/assoce id :plan-stack   (pop ps))
+         (store/assoce id :service-plan (first ps)))
+     db))
+  ([ent]
+   (if-let [ps (some-> ent  :plan-stack seq)]
+     (-> ent
+         (assoc  :plan-stack (pop ps))
+         (assoc :service-plan (first ps)))
+     ent)))
 
-(defn service-remaining? [db id]
-  (or  (not (empty? (store/gete db id :service-plan)))
-       (not (empty? (store/gete db id :plan-stack)))))
+(defn service-remaining?
+  "Determines if the entity has either an active
+   service plan, or a pending service plan in the
+   plan-stack.  one-arg version works with entity
+   maps."
+  ([db id]
+   (or  (not (empty? (store/gete db id :service-plan)))
+        (not (empty? (store/gete db id :plan-stack)))))
+  ([ent]  (or  (not (empty? (get ent :service-plan)))
+               (not (empty? (get ent :plan-stack))))))
 
 ;;So, service-providers can serve up to capacity clients....
 ;;When a client is undergoing a service, it consumes
