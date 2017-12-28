@@ -2,6 +2,11 @@
   (:require [spork.util [table   :as tbl]
              [stats :as stats :refer [exponential-dist triangle-dist]]]))
 
+(defn keyword-or-lit [fld]
+  (if (or (= fld "") (= (first fld) \:))
+          (clojure.edn/read-string fld)
+    fld))
+
 (def schemas
   {:services {:Name     :text
               :Label    :text
@@ -16,14 +21,12 @@
                 :Service  :text
                 :Recommended :text
                 :Original :boolean}
-   :processes {:Name    (fn [fld]
-                          (if (= (first fld) \:)
-                            (clojure.edn/read-string fld)
-                            fld))
+   :processes {:Name    keyword-or-lit
                :Type    :literal
                :Service :literal
                :N       :literal ;could be a fn, or a number
-               :Weights :clojure}
+               :Weights :clojure
+               :Target  keyword-or-lit}
    :routing {:Enabled :boolean
              :From    :text
              :To      :text
@@ -227,11 +230,10 @@ TRUE	Waiting	EXIT	35	Annoted exit node for wait time
 ")
 
 (def proc-processes
-"Name	Type	Service	N	Weights
-:default-process	:random-children	:add-children	1	
-Begin Family Services	:random-children	:add-children	random-child-count	
-Needs Assessment	:random-children	:add-children	1	{\"Comprehensive Processing\" 1,  \"Standard Processing\" 8,  \"Fast Track Processing\" 1}
-"
+"Name	Type	Service	N	Weights	Target
+:default-process	:random-children	:add-children	1		
+Begin Family Services	:random-children	:add-children	random-child-count		End Family Services
+Needs Assessment	:random-children	:add-children	1	{\"Comprehensive Processing\" 1,  \"Standard Processing\" 8,  \"Fast Track Processing\" 1}	"
 )
 
 (def proc-params

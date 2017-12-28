@@ -109,19 +109,29 @@
   (service [s client ctx]
     (map-service s client ctx)))
 
+(defn push-service-group [ent xs ending-service]
+  (-> ent
+      (services/push-plan {ending-service ending-service})
+      (services/push-plan  xs)))
+
 ;;This basically queues up identical
 ;;[service need] pairs derived from children.
 ;;Assumably, only one child exists that can suit
 ;;said need (i.e., the need is for that exact child service
 ;;provider, where the provider supplies a service of the same
 ;;type as its label on the graph).
-(defn add-children-as-services [children ent]
-  (let [c (get ent :service-plan [])]
-    (assoc ent :service-plan
-           (->> (for [chld children]
-                  [chld chld])
-                (into (get ent :service-plan {})
-                      )))))
+(defn add-children-as-services
+  ([children ent]
+   (let [c (get ent :service-plan [])]
+     (assoc ent :service-plan
+            (->> (for [chld children]
+                   [chld chld])
+                 (into (get ent :service-plan {})
+                       )))))
+  ([children ent tgt]
+   (if-not tgt 
+     (add-children-as-services children ent)
+     (push-service-group ent (zipmap children children) tgt))))
 
 ;;reset the sampler if we're sampling without replacements.
 (defn clear! [nd]
@@ -186,9 +196,9 @@
                                                  (throw e))))
                                                  
         :else (throw (Exception. (str [:n-must-be-number-or-one-arg-fn n])))))
-  
+
 (defmulti process->service (fn [process-graph process] (:type process)))
-(defmethod process->service :random-children [pg {:keys [name type n service weights] :as proc
+(defmethod process->service :random-children [pg {:keys [name type n service weights target] :as proc
                                                   :or {n 1}}]
   (if (= name :default-process)
     proc
@@ -205,8 +215,8 @@
                 :add-children (fn add-children
                                 ([ctx ent]
                                  (store/add-entity ctx
-                                                   (add-children-as-services (select-children) ent)))
-                                ([ent] (add-children-as-services (select-children) ent)))
+                                                   (add-children-as-services (select-children) ent target)))
+                                ([ent] (add-children-as-services (select-children) ent target)))
                 (throw (Exception. (str [:not-implemented service]))))
               :select-children select-children
               :selector selector
@@ -341,8 +351,8 @@
   (defn process-ctx [ctx]
     )
 
-  (defn processes [ctx] (store/get-domain ctx :end-service))
-  (defn parameters [ctx] (store/get-entity ctx :parameters))
+  (defn processes     [ctx] (store/get-domain ctx :end-service))
+  (defn parameters    [ctx] (store/get-entity ctx :parameters))
   (defn default-needs [ctx] (-> ctx parameters :default-needs))
   ;;so...the original service network mapped services to leaf nodes,
   ;;which were needs.  We're encoding things differently in the
@@ -350,17 +360,27 @@
   ;;they correspond to nodes on the network.
   ;;We'll basically traverse the service network until we
   ;;find a non-zero cost need/service.  
-    
+
+  #_(defn do-service [ent svc]  ((:end-service (store/get-entity ctx svc))
+                               (assoc ent :service-plan (dissoc (get ent :service-plan {})svc))))
   ;;we should be able to simulate an entire entity's lifecycle
   ;;by walking services...
   ;;Walking a service implies invoking the selector and adding
   ;;children to an entity.
-  (defn random-services [init-need procmap]
+  #_(defn random-services [init-need  ent]
     ;;from an initial need, we're basically walking the service network.
-    (when-let [f (get procmap init-need)]
-      (lazy-seq
-       (concat (f) (random-services 
-                    )))))
+    (take-while identity
+                (iterate (fn [ent]
+                           (let [plan (:service-plan ent)]
+                             (case  (count plan)
+                               0 (services/pop-plan ent)
+                               1 (when-let [svc (first (keys plan))]
+                                   (println [:doing-service svc])
+                                   (do-service ent svc))
+                               (let [_ (println [:doing-all (vec (keys plan))])
+                                     _ (println [:popping-plan])]
+                                 (services/pop-plan ent))))) (do-service ent init-need))))
+    
   
   
   )
