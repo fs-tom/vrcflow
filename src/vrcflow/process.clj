@@ -311,7 +311,27 @@
                                 (services/provider id :services [id]
                                                    :capacity Long/MAX_VALUE)))
             it (extra-providers proc-map sn))))
-  
+
+
+(defn processes     [ctx] (store/get-domain ctx :end-service))
+(defn process-groups [ctx]
+  (let [psn (services/service-network ctx)]
+    (for [p (store/select-entities ctx :from [:end-service :target] :where :target)]
+      {:parent (:name p) 
+       :children (:children p)
+       :target (:target p)})))
+
+(defn parameters    [ctx] (store/get-entity ctx :parameters))
+(defn default-needs [ctx] (-> ctx parameters :default-needs))
+
+(defn leaf-processes [ctx]
+  (mapcat :children (process-groups ctx)))
+           
+(defn disable-leaf-processes [ctx]
+  (reduce (fn [acc id]
+            (store/dissoce acc id :end-service))
+          ctx (leaf-processes ctx)))
+
 (comment ;testing
   (def rg (records->routing-graph data/proc-routing-table))
   (def caps (records->capacities    data/proc-cap-table))
@@ -345,19 +365,23 @@
            (merge-processes pm)
            (redefine-providers pm service-network)
            (merge-default-processes pm)
+           (disable-leaf-processes)
            (core/merge-entity {:parameters parameters})
            (vrc/begin-t)
            (vrc/end-t))))
-  
-  (defn one-process-ctx []
-    (proc-seed-ctx :initial-arrivals {:n 1 :t 1}
+
+  ;;create a context with only 1 entity arrival ever.
+  ;;useful for debugging.
+  (defn one-process-ctx [& {:keys [n] :or {n 1}}]
+    (proc-seed-ctx :initial-arrivals {:n n :t 1}
                    :parameters (merge data/default-parameters
                                       {:default-batch-size 0})))
-    )
+  (defn run-one
+    ([ctx]
+     (core/debugging! (def frm (last (take-while (fn [[t c]] (not (store/gete c "1_0" :departure)))
+                                                 (vrc/step-day ctx))))))
+    ([] (run-one (one-process-ctx))))
 
-  (defn processes     [ctx] (store/get-domain ctx :end-service))
-  (defn parameters    [ctx] (store/get-entity ctx :parameters))
-  (defn default-needs [ctx] (-> ctx parameters :default-needs))
   ;;so...the original service network mapped services to leaf nodes,
   ;;which were needs.  We're encoding things differently in the
   ;;process network.  The service and needs are identical, so

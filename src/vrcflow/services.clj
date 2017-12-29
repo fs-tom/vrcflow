@@ -304,7 +304,9 @@
 ;;simpler behaviors and going from there.
 
 (def ^:constant +default-wait-time+ 30)
-
+(defn get-wait-time [ctx]
+  (or (store/get-ine ctx [:parameters :default-wait-time])
+      +default-wait-time+))
 ;;this is a subset of what we have in the data; but it'll work
 ;;for the moment.
 (def basic-needs
@@ -498,7 +500,7 @@
 ;;when a client is in waiting, we update the client...
 (defn waiting-service [ctx id]
   (-> ctx 
-      (allocate-provider  (get-waiting-area ctx) #_"VRC Waiting Area" "Waiting" id)
+      (allocate-provider  (get-waiting-area ctx) "Waiting" id)
       (store/assoce id :unoccupied true)))
 
 (defn needs-service?
@@ -547,5 +549,5 @@
   "Returns the amount of spaces we have for folks to sit and wait.."
   [ctx]
   (current-capacity
-   (store/get-entity ctx "VRC Waiting Area")))
+   (store/get-entity ctx (get-waiting-area ctx))))
 

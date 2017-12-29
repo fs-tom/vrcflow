@@ -131,18 +131,25 @@
 
 (befn set-departure {:keys [entity tupdate] :as benv}
       (->seq [(echo "scheduling departure!")
-              (->do (fn [_] (swap! entity assoc :departure tupdate)))]
-      ))
+              (->do (fn [_] (swap! entity assoc :departure tupdate :service-plan {})))]
+             ))
+
+(def +terminal+ "EXIT")
+(defn non-terminal? [plan]
+  (and (pos? (count plan))
+       (not (plan +terminal+))))
 
 (defn find-plan [ent]
   (when-let [ps (seq (get ent :plan-stack))]
     (loop  [x (first ps)
             xs (rest ps)]
-      (if (and x (pos? (count x)))
+      (if (and x (non-terminal? x))
         {:service-plan x
          :plan-stack xs}
         (when xs 
           (recur (first xs) (rest xs)))))))
+
+
 
 ;;Prepare the entity's service plan based off of its needs.
 ;;If it already has one, we're done.
@@ -153,8 +160,8 @@
 (befn get-service-plan {:keys [entity ctx] :as benv}
   (let [ent  @entity]
     (if-let  [plan (:service-plan ent)]
-      (if (pos? (count plan))
-        (echo (str (:name ent) " has a service plan"))
+      (if (non-terminal? plan)
+          (echo (str (:name ent) " has a service plan"))
         (if-let [res (find-plan ent)]
           (->seq [(echo (str (:name ent) " popped a pending service plan!"))
                   ;;update the service plan and plan-stack
@@ -235,7 +242,7 @@
            (alter-entity {:active-service nil
                           :location nil
                           :service-plan (dissoc (:service-plan ent) active-service)})
-           (->do (fn [_] (println {:following (:service-plan @entity)})))
+           ;(->do (fn [_] (println {:following (:service-plan @entity)})))
            (sync-entity! entity ctx) ;;commits altered entity to ctx, pulls cleaned up entity from ctx.
            (->do (fn [_]
                    (swap! ctx

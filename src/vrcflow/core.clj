@@ -186,6 +186,9 @@
          ;;try to get the unallocated entities to wait in the waiting area.
          (reduce services/waiting-service ctx))
     ctx))
+(defn dummy [ctx]
+  (println :blah)
+  ctx)
 
 (defn clear-waiting-lists [ctx]
   (let [wl (store/get-entity ctx :waiting-list)]
@@ -281,8 +284,8 @@
                        (seed-ctx :initial-arrivals nil)))) (range n)))
 
 
-(defn client-quantities-view []
-  (->> (seed-ctx :initial-arrivals nil)
+(defn client-quantities-view [& [ctx]]
+  (->> (or ctx (seed-ctx :initial-arrivals nil))
        (step-day)
        (map analysis/frame->clients)
        (analysis/client-quantities->chart)
