@@ -50,7 +50,16 @@
 (defn providers [db] (store/select-entities db :from :provider-entity))
 (defn active-providers [db] (filter (comp seq :clients) (providers db)))
 (defn service-time [db provider svc]
-  (graph/arc-weight (service-network db) provider svc))    
+  (let [service-net (service-network db)]
+    (if-not (-> service-net meta :process-network)
+      (graph/arc-weight service-net provider svc)
+      ;;for process networks.
+      (if (graph/has-node? service-net svc) ;;self-same providerx
+        (if-let [arc (first (graph/arcs-from service-net provider))]
+          (nth arc 2) ;weight of the arc
+          0)
+        (throw (Exception. (str [:cannot-find-node svc :in-process-network])))))))
+  
 ;;Update:
 ;;We need to be able to push service plans.
 ;;We'll add a component: :plan-stack
@@ -206,10 +215,18 @@
 ;;indicators are children of :indicator
 (defn indicators     [sn]  (:indicators (meta sn)))
 (defn need->services [need service-net]
-  (graph/sources service-net need))
+  (if-not (-> service-net meta :process-network)
+    (graph/sources service-net need)
+    (if (graph/has-node? service-net need)
+      [need]
+      (throw (Exception. (str [:cannot-find-node need :in-process-network]))))))
 
 (defn service->providers [service service-net]
-  (graph/sources service-net service))
+   (if-not (-> service-net meta :process-network)
+     (graph/sources service-net service)
+     (if (graph/has-node? service-net service)
+       [service]
+       (throw (Exception. (str [:cannot-find-node service :in-process-network]))))))
 
 (defn capacities [service-net]
   (into {}

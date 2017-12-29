@@ -230,14 +230,15 @@
                             (process->service routing-graph x))])))
 
 (defn process-based-service-network [routing-graph caps proc-map]
-  (services/service-net
-   caps
-   (for [[from to w] (g/arc-seq routing-graph)]
-     {:Name from :Services to :Minutes w #_(max w 1)})
-   nil))
+  (-> (services/service-net
+       caps
+       (for [[from to w] (g/arc-seq routing-graph)]
+         {:Name from :Services to :Minutes #_w (max w 1)})
+       nil)
+      (vary-meta assoc :process-network true)))
 
 (defn records->routing-graph [xs & {:keys [default-weight]
-                                 :or {default-weight 0}}]
+                                 :or {default-weight 1 #_0}}]
   (->>  (for [{:keys [From To Weight Enabled]} (tbl/as-records xs)
               :when Enabled]
           [From To (if (and Weight (pos? Weight))
@@ -348,7 +349,10 @@
            (vrc/begin-t)
            (vrc/end-t))))
   
-  (defn process-ctx [ctx]
+  (defn one-process-ctx []
+    (proc-seed-ctx :initial-arrivals {:n 1 :t 1}
+                   :parameters (merge data/default-parameters
+                                      {:default-batch-size 0})))
     )
 
   (defn processes     [ctx] (store/get-domain ctx :end-service))

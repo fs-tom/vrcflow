@@ -44,7 +44,7 @@
          (keys)
          (reduce (fn [acc e]
                    (send!! (store/get-entity acc e) :update t acc))
-                   ctx))))
+                 ctx))))
 
 ;;Note: the only crucial bit of information we need for this
 ;;service simulation to work is the service network and the
@@ -158,8 +158,9 @@
 (defn fill-services
   ([waiting ctx]
    (reduce-kv (fn [acc svc ents]
-                (when-let [xs (services/available-service svc acc)] 
-                  (assign-service acc svc ents xs)))
+                (if-let [xs (services/available-service svc acc)] 
+                  (assign-service acc svc ents xs)
+                  acc))
               ctx waiting))
   ([ctx]
    (fill-services (store/get-entity ctx :waiting-list) ctx)))

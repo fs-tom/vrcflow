@@ -64,6 +64,16 @@
 (defn alter-entity [m]
   (->do #(swap! (:entity %) merge m)))
 
+;;synchronizes the entity and the context by
+;;committing the entity to the context, then
+;;getting a fresh entity reference from the ctx.
+;;This is a hack that can probably be solved by
+;;re-organizing or otherwise limiting our
+;;implementation of begin/end-service.
+(defn sync-entity! [e ctx]
+  (->do (fn [_] (do (swap! ctx store/add-entity @e)
+                    (reset! e (store/get-entity @ctx (:name @e)))))))
+
 ;;Migrate both echo and ->trigger into other
 ;;behaviors...
 (defn echo [msg]
@@ -100,7 +110,7 @@
 
 ;#_(def screenining (->and [(get-service "screening") 
 (defn set-service [nm]
-  (alter-entity {:active-service nm}))  
+  (alter-entity {:active-service nm}))
 
 ;;enter/spawn behavior
 ;;For VRC, we defaulted (hard coded) to "Self Assessment" as
@@ -210,18 +220,29 @@
      (success benv))))
 
 ;;Make sure we remove the service from the service-plan.
+;;note: begin-service/end-service are currently acting
+;;on the context, but they're invoked from finish-service,
+;;which means we have the behavior context desynced
+;;from the entity.  So, we either need a convention
+;;to ensure this can't happen, or intentionally sync
+;;the entity reference with the components in
+;;the context prior to servicing..
 (befn finish-service {:keys [ctx entity] :as benv}
  (let [ent @entity
        active-service (:active-service ent)]
    (->seq [(echo (str "Entity finished service: " active-service))
+           ;;checked out, or local entity...
            (alter-entity {:active-service nil
                           :location nil
                           :service-plan (dissoc (:service-plan ent) active-service)})
+           (->do (fn [_] (println {:following (:service-plan @entity)})))
+           (sync-entity! entity ctx) ;;commits altered entity to ctx, pulls cleaned up entity from ctx.
            (->do (fn [_]
                    (swap! ctx
                           services/deallocate-provider
                           (:location ent) ;provider
-                          (:name ent))))])))
+                          (:name ent))))
+           (->do (fn [_] (reset! entity (store/get-entity @ctx (:name ent)))))])))
 
 ;;if we have an active service set that we're trying to
 ;;get to, we already have a service in mind.
@@ -238,7 +259,7 @@
             (echo "Still in service")))
         
         (->seq [(echo "looking for services")
-                get-service-plan
+                get-service-plan                
                 request-next-available-service
                 reset-wait-time])))
 
@@ -288,7 +309,7 @@
 (def default-handler
   (actor/->handler
    {:update (->and [(echo :update)
-                    client-update-beh                           
+                    client-update-beh
                     ]) 
     :wait   #(let [msg (:current-message %)
                    {:keys [location wait-time]} (:data msg)
