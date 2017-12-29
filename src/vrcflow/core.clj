@@ -279,20 +279,24 @@
   ([] (step-day (sim/advance-time (seed-ctx)))))
 
 ;;Simple Visualization Routines
-(defn samples [n]
-  (pmap  (fn [_] (vec (step-day
-                       (seed-ctx :initial-arrivals nil)))) (range n)))
+;;Beware: calling samples with a large function and sticking
+;;in a vector can be deleterious to memory at the moment!
+;;Much better to stream.
+(defn samples [n & {:keys [seed serial? samplef]
+                    :or {samplef vec}}]
+  ((if serial? map pmap)
+   (fn [_] (samplef (step-day
+                 (or seed (seed-ctx :initial-arrivals nil))))) (range n)))
 
-
-(defn client-quantities-view [& [ctx]]
+(defn client-quantities-view [& {:keys [ctx]}]
   (->> (or ctx (seed-ctx :initial-arrivals nil))
        (step-day)
        (map analysis/frame->clients)
        (analysis/client-quantities->chart)
        (i/view)))
 
-(defn mean-utilization-view [& {:keys [n] :or {n 30}}]
-  (->> (samples n)
+(defn mean-utilization-view [& {:keys [n seed serial?] :or {n 30}}]
+  (->> (samples n :seed seed :serial? serial?)
        (analysis/hs->mean-utilizations)
        (analysis/utilization-plots)
        (i/view)))

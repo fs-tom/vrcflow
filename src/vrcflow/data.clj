@@ -239,7 +239,7 @@ Needs Assessment	:random-children	:add-children	1	{\"Comprehensive Processing\" 
 (def proc-params
 "Name	Value
 :seed	5555
-:default-wait-time	35
+:default-wait-time	999999
 :default-wait-location	\"Waiting\"
 :default-needs	#{\"ENTER\"}
 :default-interarrival	(exponential-dist 5)

@@ -489,12 +489,10 @@
        ))
 
 ;;generalized from hardcoded VRC implementation.
-(def get-waiting-area
-  (gen/memo-1
-   (fn get-waiting-area [ctx]
+(defn get-waiting-area [ctx]
      (or (store/gete ctx :parameters :default-wait-location)
          "VRC Waiting Area")
-     )))
+     )
 
 ;;TODO: change this to include 
 ;;when a client is in waiting, we update the client...

@@ -105,8 +105,8 @@
    (alter-entity {:needs (needs-fn)})))
 
 ;;Sets the entity's upper bound on waiting
-(befn reset-wait-time {:keys [entity] :as benv}
-      (alter-entity {:wait-time services/+default-wait-time+}))
+(befn reset-wait-time {:keys [entity ctx] :as benv}
+      (alter-entity {:wait-time (services/get-wait-time @ctx) #_+default-wait-time+}))
 
 ;#_(def screenining (->and [(get-service "screening") 
 (defn set-service [nm]
