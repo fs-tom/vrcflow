@@ -278,15 +278,39 @@
                                 :keep-simulating? (fn [_] true)))
   ([] (step-day (sim/advance-time (seed-ctx)))))
 
+(def errs (atom nil))
+(defn pmap2 [f coll]
+  (let [n 2
+        _ (reset! errs nil)
+        rets (map #(future (try (f %) (catch Exception e (do (swap! errs conj e) (throw e))))) coll)
+        step (fn step [[x & xs :as vs] fs]
+               (lazy-seq
+                (if-let [s (seq fs)]
+                  (cons (deref x) (step xs (rest s)))
+                  (map deref vs))))]
+    (step rets (drop n rets))))
+
+(defn pmap-eager [f coll]
+  (loop [xs (partition-all 2 coll)
+         acc []]
+    (if (seq xs)
+      (let [work (map #(future (f %)) (first xs))
+            work (mapv deref work)]
+        (recur (rest xs)
+               (into acc work)))
+      acc)))
+(require '[clojure.core.reducers :as r])
+(defn pmap! [f coll]
+  (r/fold 1 (fn combine ([l r] (concat l r)) ([] [])) (fn red ([acc x] (conj acc (f x))) ([] [])) coll))
 ;;Simple Visualization Routines
 ;;Beware: calling samples with a large function and sticking
 ;;in a vector can be deleterious to memory at the moment!
 ;;Much better to stream.
 (defn samples [n & {:keys [seed serial? samplef]
                     :or {samplef vec}}]
-  ((if serial? map pmap)
+  ((if serial? map pmap) 
    (fn [_] (samplef (step-day
-                 (or seed (seed-ctx :initial-arrivals nil))))) (range n)))
+                     (or seed (seed-ctx :initial-arrivals nil)))))  (range n)))
 
 (defn client-quantities-view [& {:keys [ctx]}]
   (->> (or ctx (seed-ctx :initial-arrivals nil))

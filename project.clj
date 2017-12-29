@@ -10,4 +10,5 @@
                  [piccolotest "0.1.2-SNAPSHOT"]
                  [org.clojure/spec.alpha "0.1.143"]
                  [org.clojure/test.check "0.9.0"]
-                 ])
+                 ]
+  :jvm-opts ^:replace ["-Xmx4g" #_"-Xmx1000m" "-XX:NewSize=200m"])
