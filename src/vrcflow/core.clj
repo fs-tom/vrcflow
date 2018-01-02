@@ -312,8 +312,8 @@
    (fn [_] (samplef (step-day
                      (or seed (seed-ctx :initial-arrivals nil)))))  (range n)))
 
-(defn client-quantities-view [& {:keys [ctx]}]
-  (->> (or ctx (seed-ctx :initial-arrivals nil))
+(defn client-quantities-view [& {:keys [seed]}]
+  (->> (or seed (seed-ctx :initial-arrivals nil))
        (step-day)
        (map analysis/frame->clients)
        (analysis/client-quantities->chart)

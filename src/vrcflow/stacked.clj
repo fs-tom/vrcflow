@@ -48,8 +48,10 @@
                                 [:Category :start]))
       ($order :start :asc))))
 
+(def bad (atom nil))
 (defn series-by [x-key y-key series-key xs]
-  (let [order      (atom [])
+  (let [_ (reset! bad xs)
+        order      (atom [])
         get-series! (fn get-series! ^XYSeries [series k] 
                       (if-let [res (get @series k)]
                         res

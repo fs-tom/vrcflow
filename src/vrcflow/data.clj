@@ -1,11 +1,19 @@
 (ns vrcflow.data
   (:require [spork.util [table   :as tbl]
-             [stats :as stats :refer [exponential-dist triangle-dist]]]))
+             [stats :as stats :refer [exponential-dist triangle-dist]]]
+            [spork.cljgraph.core :as g]))
 
 (defn keyword-or-lit [fld]
   (if (or (= fld "") (= (first fld) \:))
           (clojure.edn/read-string fld)
-    fld))
+          fld))
+
+(defn long-or-nil [fld]
+  (try
+    (let [n ((spork.util.parsing/parse-defaults :number) fld)]
+      (long n))
+    (catch Exception e Long/MIN_VALUE)))
+       
 
 (def schemas
   {:services {:Name     :text
@@ -15,7 +23,7 @@
    :capacities {:Name     :text
                 :Label    :text
                 ;:Focus    :text
-                :Capacity :long?}
+                :Capacity long-or-nil}
    :prompts    {:Category :text
                 :Target :text
                 :Service  :text
@@ -251,7 +259,76 @@ Needs Assessment	:random-children	:add-children	1	{\"Comprehensive Processing\" 
 (def proc-cap-table       (tbl/tabdelimited->table proc-caps      :schema (:capacities schemas)))
 (def proc-processes-table (tbl/tabdelimited->table proc-processes :schema (:processes  schemas)))
 (def proc-params-table    (tbl/tabdelimited->table proc-params    :schema (:parameters schemas)))
+
 ;;i'm allowing exponential and triangular distributions...
 (def default-parameters   (into {} (comp (map (juxt :Name  :Value))
                                          (map (fn [[n v]]  [n (if (list? v) (eval v) v)])))
                                 proc-params-table))
+
+(defn coerce-table
+  "Coerce a table to the desired schema.  This a janky work-around for excel parsing."
+  [s t]
+  (if-let [schema (or (and (map? s) s) (get schemas s))]
+    (-> t
+        (tbl/table->tabdelimited)
+        (tbl/tabdelimited->table :schema schema))
+    (throw (Exception. (str [:not-a-schema-or-key s])))))
+
+(defn coerce-tables [m]
+  (reduce-kv (fn [acc tname t]
+               (try 
+                 (assoc acc tname (if-let [s (schemas tname)]
+                                    (coerce-table s t)
+                                    t))
+                 (catch Exception e (do (println [:error-parsing tname])
+                                        (throw e)))))
+             {} m))
+
+;;Consolidated some specialized processing functions here.
+;;We do some cleanup and a bit of parsing/resolving (like stats
+;;functions) that's nicer to keep in one place.
+(defmacro eval-in [tgt expr]
+  (let [my-ns        tgt]
+    `(let [original-ns#  (symbol (str ~'*ns*))]
+       (try 
+         (do (in-ns ~my-ns)
+              (let [res# (eval ~expr)]
+                (in-ns original-ns#)
+                res#))
+        (catch Exception e#
+          (do (in-ns original-ns#)
+              (throw e#)))))))
+
+(defmacro try-eval [expr]
+  `(try (eval ~expr)
+        (catch Exception e#
+          (eval-in ~''vrcflow.data ~expr))))
+
+(defn records->parameters [xs]
+  (into {} (comp (map (juxt :Name  :Value))
+                                         (map (fn [[n v]]  [n (if (list? v) (try-eval v) v)])))
+        xs))
+
+(defn records->routing-graph [xs & {:keys [default-weight]
+                                 :or {default-weight 1 #_0}}]
+  (->>  (for [{:keys [From To Weight Enabled]} (tbl/as-records xs)
+              :when Enabled]
+          [From To (if (and Weight (pos? Weight))
+                     (long Weight) default-weight)]
+          )
+        (g/add-arcs g/empty-graph)))
+
+;;we use LONG/MAX_VALUE as a substitute for infinity.  Ensure
+;;that unconstrained nodes have max capacity.
+(defn records->capacities [xs]
+  (for [{:keys [Name Label Capacity] :as r} (tbl/as-records xs)]
+    (if-not (pos? Capacity)
+      (assoc r :Capacity Long/MAX_VALUE) ;;close to inf
+      r)))
+
+(defn records->processes [processes]
+  (for [r (tbl/as-records  processes)]
+    (reduce-kv (fn [acc k v]
+                 (assoc acc
+                        (keyword (clojure.string/lower-case (name k))) v))
+               {} r)))

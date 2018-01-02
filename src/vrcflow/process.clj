@@ -19,27 +19,24 @@
             [clojure.spec.test.alpha :as stest]
              ))
 
-;;testing...
-(def p  (io/alien->native (io/hpath "Documents/repat/repatdata.xlsx")))
-(def wb
-  (->> (xl/xlsx->tables p)
-       (reduce-kv (fn [acc k v] (assoc acc (keyword k) (tbl/keywordize-field-names v)))
-                  {})))
+;;aux functions
+(defn keywordize-tables [m]
+  (reduce-kv (fn [acc k v] (assoc acc (keyword k) (tbl/keywordize-field-names v)))
+             {} m))
 
 (defn route-graph [xs]
   (->>  xs
         (map (juxt :From :To (comp long :Weight)))
         (g/add-arcs g/empty-graph)))
 
-(defn wb->routes [wb]
-  (route-graph (tbl/table-records (get wb :Routing))))
-
 ;;We've got routes defined via a DAG
 
 ;;How do we define a service network?
 
 ;;How do we express cycles?
-(def rg (wb->routes wb))
+;(def rg (wb->routes wb))
+
+
 
 ;;I think what we'll do is..
 ;;Entities that follow a routing graph
@@ -68,7 +65,7 @@
   (inc (rand-int (count children))))
 
 ;;Sample processes.
-(def processes
+#_(def processes
  [{:type :random-children
    :name :default-process
    :n    1
@@ -93,7 +90,7 @@
 ;;This then fits into our service model from VRCflow.  From there
 ;;we should be able to execute the sim like normal.
 ;;What about arrivals? Later...
-(defprotocol IService
+(comment (defprotocol IService
   (service [s client ctx]))
 
 (defn map-service [m client ctx]
@@ -108,6 +105,7 @@
   clojure.lang.PersistentHashMap
   (service [s client ctx]
     (map-service s client ctx)))
+)
 
 (defn push-service-group [ent xs ending-service]
   (-> ent
@@ -189,12 +187,11 @@
 ;;
 
 (defn resolve-n [selector children n]
-  (cond (number? n) (fn select-children [] (selector))
-        (fn? n)     (fn select-children [] (selector (n children)))
+  (cond (number? n)  (fn select-children [] (selector))
+        (fn? n)      (fn select-children [] (selector (n children)))
         (symbol? n)  (try (resolve-n selector children @(ns-resolve *ns* n))
-                          (catch Exception e (do (println [:failed-to-find-symbol n])
-                                                 (throw e))))
-                                                 
+                          (catch Exception e (do (println [:failed-to-find-symbol n :in *ns*])
+                                                 (throw e))))                                          
         :else (throw (Exception. (str [:n-must-be-number-or-one-arg-fn n])))))
 
 (defmulti process->service (fn [process-graph process] (:type process)))
@@ -237,22 +234,6 @@
        nil)
       (vary-meta assoc :process-network true)))
 
-(defn records->routing-graph [xs & {:keys [default-weight]
-                                 :or {default-weight 1 #_0}}]
-  (->>  (for [{:keys [From To Weight Enabled]} (tbl/as-records xs)
-              :when Enabled]
-          [From To (if (and Weight (pos? Weight))
-                     Weight default-weight)]
-          )
-        (g/add-arcs g/empty-graph)))
-
-;;we use LONG/MAX_VALUE as a substitute for infinity.  Ensure
-;;that unconstrained nodes have max capacity.
-(defn records->capacities [xs]
-  (for [{:keys [Name Label Capacity] :as r} (tbl/as-records xs)]
-    (if-not (pos? Capacity)
-      (assoc r :Capacity Long/MAX_VALUE) ;;close to inf
-      r)))
 
 ;;using a baked default for now...
 (defn as-default-process [service-network nd]
@@ -332,50 +313,98 @@
             (store/dissoce acc id :end-service))
           ctx (leaf-processes ctx)))
 
+(defn records->process-map [routing-graph processes]
+  (let [ps (data/records->processes processes)]
+    (process-map routing-graph ps)))
+
+;;this is a work-around for generating a spec
+;;for ensuring that we have expected keys in a project map.
+;;The sticky point is, spec expects qualified keywords...
+;;even IF we're using unqualified keys for the spec
+;;option.  Weird!?
+(defn qualify-keys [xs]
+  (map #(keyword (str *ns*) (name %)) xs))
+
+;;unqualified...
+(def +project-keys+
+  #{:tables :route-graph
+    :capacities :initial-arrivals
+    :service-network :parameters})
+
+(spec/def ::project-keys +project-keys+)
+;;have to inject the keys since it's a symbol, and spec is macro-based!
+(eval `(spec/def ::project-map (spec/keys :req-un  ~(qualify-keys +project-keys+))))
+
+(defn lower-case-keys [m]
+  (into {} 
+        (for [[k v] m]
+          [(-> k  clojure.string/lower-case name) v])))
+
+(defn xlsx->tables [path]
+  (->> (io/alien->native path)
+       (xl/xlsx->tables)
+       (lower-case-keys)
+       (keywordize-tables)
+       (data/coerce-tables)))
+
+(defn wb->proc-project [path]
+  (let [tbls (xlsx->tables path)
+        {:keys [routing capacities parameters processes arrivals]} tbls
+        caps   (data/records->capacities capacities)
+        rg     (data/records->routing-graph routing)
+        params (data/records->parameters parameters)]
+    {:tables           tbls
+     :route-graph      rg      
+     :capacities       caps      
+     :initial-arrivals (when arrivals arrivals) ;;Right now...don't have anything special.
+     :service-network  (process-based-service-network
+                        rg
+                        caps
+                        nil)
+     :parameters params
+     :processes (records->process-map rg processes)}))
+
+;;we'd like to move from this eventually...
+(defn proc-seed-ctx
+  [proj & {:keys [initial-arrivals]
+           :or {initial-arrivals {:n 10 :t 1}
+                } :as opts}]
+  (let [{:keys [service-network parameters processes]} proj
+        {:keys [;default-behavior
+                default-interarrival
+                default-batch-size]} parameters
+        pm     processes]
+
+    (->> (vrc/init (core/debug! vrc/emptysim) :initial-arrivals initial-arrivals
+                   :default-behavior beh/client-beh
+                   :service-network service-network
+                   :interarrival    default-interarrival
+                   :batch-size      default-batch-size)
+          (merge-processes pm)
+          (redefine-providers pm service-network)
+          (merge-default-processes pm)
+          (disable-leaf-processes)
+          (core/merge-entity {:parameters parameters})
+          (vrc/begin-t)
+          (vrc/end-t)
+         )))
+
+;;create a context with only 1 entity arrival ever.
+;;useful for debugging.
+(defn one-process-ctx [proj & {:keys [n] :or {n 1}}]
+  (proc-seed-ctx (update proj :parameters merge {:default-batch-size 0})
+                 :initial-arrivals {:n n :t 1}))
+
+
+(defn run-one
+    ([ctx]
+     (core/debugging! (def frm (last (take-while (fn [[t c]] (not (store/gete c "1_0" :departure)))
+                                                 (vrc/step-day ctx)))))))
 (comment ;testing
-  (def rg (records->routing-graph data/proc-routing-table))
-  (def caps (records->capacities    data/proc-cap-table))
-  (def psn (process-based-service-network
-            rg
-            caps
-            nil #_(tbl/as-records         data/proc-processes-table)))
-  
-  ;;we're basically building up a map of services...
-  (def pm (process-map rg
-                       (for [r (tbl/as-records  data/proc-processes-table)]
-                         (reduce-kv (fn [acc k v]
-                                      (assoc acc
-                                             (keyword (clojure.string/lower-case (name k))) v))
-                                    {} r))))
-  ;;we'd like to move from this eventually...
-  (defn proc-seed-ctx
-    [& {:keys [initial-arrivals service-network parameters]
-        :or {initial-arrivals {:n 10 :t 1}
-             service-network  psn
-             parameters data/default-parameters} :as opts}]
-    (let [{:keys [;default-behavior
-                  default-interarrival
-                  default-batch-size]} parameters]
 
-      (->> (vrc/init (core/debug! vrc/emptysim) :initial-arrivals initial-arrivals
-                     :default-behavior beh/client-beh
-                     :service-network service-network
-                     :interarrival    default-interarrival
-                     :batch-size      default-batch-size)
-           (merge-processes pm)
-           (redefine-providers pm service-network)
-           (merge-default-processes pm)
-           (disable-leaf-processes)
-           (core/merge-entity {:parameters parameters})
-           (vrc/begin-t)
-           (vrc/end-t))))
+  (def p (io/alien->native (io/hpath "Documents/repat/repatdata.xlsx")))
 
-  ;;create a context with only 1 entity arrival ever.
-  ;;useful for debugging.
-  (defn one-process-ctx [& {:keys [n] :or {n 1}}]
-    (proc-seed-ctx :initial-arrivals {:n n :t 1}
-                   :parameters (merge data/default-parameters
-                                      {:default-batch-size 0})))
+  )
   (defn run-one
     ([ctx]
      (core/debugging! (def frm (last (take-while (fn [[t c]] (not (store/gete c "1_0" :departure)))
@@ -411,7 +440,7 @@
     
   
   
-  )
+;  )
 ;;so we have an entry for a default process in the process map.
 ;;Additionally, we have maps of processes, which have a :service
 ;;component and :on-service component.
