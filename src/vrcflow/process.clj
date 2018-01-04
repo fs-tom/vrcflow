@@ -290,7 +290,8 @@
     (reduce (fn [acc id]
               (store/add-entity acc
                                 (services/provider id :services [id]
-                                                   :capacity Long/MAX_VALUE)))
+                                                   :capacity (or (store/gete acc id :capacity)
+                                                                 Long/MAX_VALUE))))
             it (extra-providers proc-map sn))))
 
 

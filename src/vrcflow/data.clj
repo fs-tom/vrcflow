@@ -47,7 +47,40 @@
 
 ;;Trend preferences and Series Coloring (could be data!)
 ;;======================================================
-(def provider-order
+(def neo-provider-order
+  ["ENTER" ;orange
+   "JRPC Holding Area"  ;copper
+   "Waiting"  ;dark-green
+   "Needs Assessment" ;light-blue
+   "Fast Track Processing" ;dark-blue
+   "Standard Processing"  ;amber
+   "Update Orders" ;yellow
+   "Finance" ;blue
+   "Comprehensive Processing" ;red
+   "Finance (Comprehensive Counseling)" ;light-orange
+   "Begin Family Services" ;olive-drab
+   "DODS" ;silver
+   "Casualty Assistance" ;gold
+   "Tricare" ;light-red
+   "Legal" ;violet
+   "End Family Services" ;light-green
+   "CTO" ;grey
+   "Clearance" ;sea-green
+   "Produce Orders" ;navy-blue
+   "Shared Services & Volunteers"  ;black
+   "Triage And Sort" ;black
+   "HHS/State Services" ;black
+   "Luggage Holding Area"  ;black
+   "Move To Final Destination" ;black
+   "Movement to JRPC/ERPC" ;black
+   "NTS Scan Point"   ;black
+   "Aircraft Arrival and Debarkation" ;black
+   "Alternate NTS Scan Point" ;black
+   "Customs and Immigration" ;black
+   "ERC Holding Area"] ;black
+  )
+  
+(def vrc-provider-order
   ["VRC Waiting Area"
    "VRC Reception Area"
    "Chaplain Services"
@@ -60,8 +93,13 @@
    "Health Promotion Operations"
 
    "Military And Family Readiness Center"
-   "Army Public Health Nursing"])
-(def provider-colors
+   "Army Public Health Nursing"
+
+   ])
+
+(def provider-order (into vrc-provider-order neo-provider-order))
+
+(def vrc-provider-colors
   {"VRC Waiting Area" :dark-green
    "VRC Reception Area" :green
    "Chaplain Services"   :light-blue
@@ -76,6 +114,44 @@
    "completed" :sea-green
    "exited" :black
    })
+
+(def neo-provider-colors
+  {"ENTER" :orange
+   "JRPC Holding Area"  :light-grey
+   "Waiting"  :dark-green
+   "Needs Assessment" :light-blue
+   "Fast Track Processing" :dark-blue
+   "Standard Processing"  :amber
+   "Update Orders" :yellow
+   "Finance" :blue
+   "Comprehensive Processing" :red
+   "Finance (Comprehensive Counseling)" :light-orange
+   "Begin Family Services" :olive-drab
+   "DODS" :silver
+   "Casualty Assistance" :gold
+   "Tricare" :light-red
+   "Legal" :violet
+   "End Family Services" :light-green
+   "CTO" :grey
+   "Clearance" :sea-green
+   "Produce Orders" :purple
+   "Shared Services & Volunteers"  :black
+   "Triage And Sort" :black
+   "HHS/State Services" :black
+   "Luggage Holding Area"  :black
+   "Move To Final Destination" :black
+   "Movement to JRPC/ERPC" :black
+   "NTS Scan Point"   :black
+   "Aircraft Arrival and Debarkation" :black
+   "Alternate NTS Scan Point" :black
+   "Customs and Immigration" :black
+   "ERC Holding Area" :black
+   }
+  
+  )
+
+(def provider-colors (merge vrc-provider-colors neo-provider-colors))
+
 
 ;;Service Model - Drawn From Slides
 ;;=================================

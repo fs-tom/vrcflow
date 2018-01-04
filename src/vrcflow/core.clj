@@ -319,9 +319,16 @@
        (analysis/client-quantities->chart)
        (i/view)))
 
-(defn mean-utilization-view [& {:keys [n seed serial?] :or {n 30}}]
+(defn non-zeroes [m]
+  (into {} 
+        (for [[k xs] m
+              :when (not (zero? (reduce + xs)))]
+          [k xs])))
+               
+(defn mean-utilization-view [& {:keys [n seed serial? non-zeroes?] :or {n 30 non-zeroes? true}}]
   (->> (samples n :seed seed :serial? serial?)
        (analysis/hs->mean-utilizations)
+       (#(if non-zeroes? (non-zeroes %) %))
        (analysis/utilization-plots)
        (i/view)))
 
