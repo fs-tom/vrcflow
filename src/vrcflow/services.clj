@@ -415,6 +415,18 @@
        (store/assoce ctx :arrival :pending)
        (sim/request-update (:t batch) :arrival :arrival)))
 
+(defn schedule-multiple-arrivals
+  "Given batches, schedules new arrivals for ctx."
+  [batches ctx]
+  (reduce schedule-arrival ctx batches))
+
+#_(defn schedule-arrivals
+  "Given a batch order, schedules new arrivals for ctx."
+  [batch ctx]
+  (cond (map? batch)  (schedule-arrival batch ctx)
+        (coll? batch) (schedule-multiple-arrivals batch ctx)
+        :else (throw  (Exception. (str [:unknown-batch-type (type batch)])))))
+
 ;;;temporary hack/shim...
 (defn add-updates [ctx xs]
   (reduce (fn [acc [t from type]]

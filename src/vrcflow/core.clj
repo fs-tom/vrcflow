@@ -109,7 +109,8 @@
             (services/schedule-arrivals new-batch)))
      (do (spork.ai.core/debug "No arrivals!")
          ctx)))
-  ([ctx] (process-arrivals services/batch->entities ctx)))
+  ([ctx] (process-arrivals (or (store/gete ctx :parameters :batch->entities)
+                               services/batch->entities) ctx)))
 
 (defn fill-to
   "Given an amount of fill and multiple pairs of 

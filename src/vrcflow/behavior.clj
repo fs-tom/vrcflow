@@ -100,9 +100,10 @@
 ;;with even odds for picking a need.
 ;;how many needs per person?
 ;;make it exponentially hard to have each additional need?
-(befn compute-needs {:keys [ctx entity parameters] :as benv}
- (let [needs-fn (get parameters :needs-fn services/random-needs)]
-   (alter-entity {:needs (needs-fn)})))
+(befn compute-needs {:keys [ctx entity parameters] :as benv} 
+      (let [needs-fn (get parameters :needs-fn services/random-needs)
+            needs    (:known-needs @entity)] ;;if the entity has known-needs, use them.
+        (alter-entity {:needs (needs-fn) #_(or needs (needs-fn))})))
 
 ;;Sets the entity's upper bound on waiting
 (befn reset-wait-time {:keys [entity ctx] :as benv}
