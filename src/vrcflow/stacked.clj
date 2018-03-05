@@ -5,7 +5,8 @@
              [incanter.core   :refer :all]
              [incanter.io     :refer :all]
              [incanter.charts :refer :all]
-             [spork.graphics2d.canvas])
+             [spork.graphics2d.canvas]
+             [clojure.core.matrix.dataset :as ds])
    (:import  [org.jfree.data.xy DefaultTableXYDataset 
                                 XYSeries XYSeriesCollection 
               XYDataItem]
@@ -313,7 +314,7 @@
           data         (or (:data opts) $data)
           _group-by    (when (:group-by opts) (:group-by opts)) ; (data-as-list (:group-by opts) data)) 
           ;;new
-          series-map   (series-by xkey ykey (or _group-by (fn [_] "Series")) (:rows data))
+          series-map   (series-by xkey ykey (or _group-by (fn [_] "Series")) (ds/row-maps data))
           ;;new
           order        (get (meta series-map) :order)
           dtbl         (build-datatable   series-map)]

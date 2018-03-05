@@ -407,7 +407,7 @@
 ;;arrivals on the same day (we could do something like that
 ;;though, we just don't necessarily advance time if
 ;;unplanned arrivals occur).
-(defn schedule-arrivals
+(defn schedule-arrival
   "Given a batch order, schedules new arrivals for ctx."
   [batch ctx]
   (->> batch
@@ -418,13 +418,14 @@
 (defn schedule-multiple-arrivals
   "Given batches, schedules new arrivals for ctx."
   [batches ctx]
-  (reduce schedule-arrival ctx batches))
+  (println [:scheduling-multiple-arrivals!]
+  (reduce #(schedule-arrival %2 %1) ctx batches)))
 
-#_(defn schedule-arrivals
+(defn schedule-arrivals
   "Given a batch order, schedules new arrivals for ctx."
   [batch ctx]
   (cond (map? batch)  (schedule-arrival batch ctx)
-        (coll? batch) (schedule-multiple-arrivals batch ctx)
+        (seq? batch)  (schedule-multiple-arrivals batch ctx)
         :else (throw  (Exception. (str [:unknown-batch-type (type batch)])))))
 
 ;;;temporary hack/shim...

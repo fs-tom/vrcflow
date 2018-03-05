@@ -367,7 +367,7 @@
 
 ;;we'd like to move from this eventually...
 (defn proc-seed-ctx
-  [proj & {:keys [initial-arrivals]
+  [proj & {:keys [initial-arrivals batch->entities]
            :or {initial-arrivals {:n 10 :t 1}
                 } :as opts}]
   (let [{:keys [service-network parameters processes]} proj
@@ -376,7 +376,10 @@
                 default-batch-size]} parameters
         pm     processes]
 
-    (->> (vrc/init (core/debug! vrc/emptysim) :initial-arrivals initial-arrivals
+    (->> (vrc/init (store/assoce (core/debug! vrc/emptysim)
+                                 :parameters :batch->entities
+                                 (or batch->entities services/batch->entities))
+                   :initial-arrivals initial-arrivals
                    :default-behavior beh/client-beh
                    :service-network service-network
                    :interarrival    default-interarrival
@@ -388,7 +391,7 @@
           (core/merge-entity {:parameters parameters})
           (vrc/begin-t)
           (vrc/end-t)
-         )))
+          )))
 
 ;;create a context with only 1 entity arrival ever.
 ;;useful for debugging.
