@@ -1,0 +1,3 @@
+;;public entry point for vrcflow.
+;;primarily looking at refactoring stuff...
+(ns vrcflow.main)
