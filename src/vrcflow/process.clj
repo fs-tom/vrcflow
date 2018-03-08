@@ -59,8 +59,9 @@
                        :number ::num
                        ))
 
+;;alter the spec for weights definition
 (spec/def ::weights (spec/map-of ::name ::n))
-                                 
+
 (defn random-child-count [children]
   (inc (rand-int (count children))))
 
@@ -173,6 +174,13 @@
              :else (throw (Exception.
                            "Number of children selected must be <= total children!")))))))
 
+(defn pre-processed
+  "Find any pre-"
+  [e process-name]
+  (-> e :pre-processed (get process-name)))
+
+(defn add-pre-proceesed [e process-name children])
+
 ;;now we can define child selectors that sample without replacement
 ;;or with replacement.  Our typical use case is without replacement
 ;;though.
@@ -191,29 +199,42 @@
         (fn? n)      (fn select-children [] (selector (n children)))
         (symbol? n)  (try (resolve-n selector children @(ns-resolve *ns* n))
                           (catch Exception e (do (println [:failed-to-find-symbol n :in *ns*])
-                                                 (throw e))))                                          
+                                                 (throw e))))
         :else (throw (Exception. (str [:n-must-be-number-or-one-arg-fn n])))))
 
 (defmulti process->service (fn [process-graph process] (:type process)))
+;;Update: We'll allow the entity to "override" or otherwise side-step the
+;;random client generation process by specifying preferences for a service.
+;;If the entity ALREADY HAS a processing preferenc, then we'll eschew choosing
+;;random children, and instead, select the entity's preference relative to
+;;the service.
 (defmethod process->service :random-children [pg {:keys [name type n service weights target] :as proc
                                                   :or {n 1}}]
   (if (= name :default-process)
     proc
-    (let [children  (g/sinks pg name)
+    (let [process-name name
+          children  (g/sinks pg name)
           selector (case (count children)
                      0 (throw (Exception. (str [proc :requires :at-least 1 :child])))
                      (child-selector (or weights children)
                                      (if (number? n) n 1)))
-          select-children  (resolve-n selector children n)
-          ]
+          random-select    (resolve-n selector children n)
+          select-children  (fn entity-children
+                             ([e]
+                              (if-let [xs (pre-processed e process-name)]
+                                xs
+                                (random-select)))
+                             ([] (random-select)))]
       (merge proc
-             {:end-service 
+             {:end-service
               (case service ;;only have one type of service at the moment.
                 :add-children (fn add-children
                                 ([ctx ent]
                                  (store/add-entity ctx
-                                                   (add-children-as-services (select-children) ent target)))
-                                ([ent] (add-children-as-services (select-children) ent target)))
+                                   (add-children-as-services
+                                    (select-children ent) ent target)))
+                                ([ent] (add-children-as-services
+                                        (select-children ent) ent target)))
                 (throw (Exception. (str [:not-implemented service]))))
               :select-children select-children
               :selector selector
@@ -406,7 +427,7 @@
                                                  (vrc/step-day ctx)))))))
 (comment ;testing
 
-  (def p (io/alien->native (io/hpath "Documents/repat/repatdata.xlsx")))
+  (def p (io/file-path "~/Documents/repat/repatdata.xlsx"))
 
   )
   (defn run-one
