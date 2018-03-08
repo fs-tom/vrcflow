@@ -101,9 +101,7 @@
            arr    (store/get-entity ctx :arrival) ;;known entity arrivals...
            {:keys [pending arrival-fn next-batch]}    arr
            new-entities (batch->entities pending)
-           new-batch    (next-batch (:t pending))
-           #_(services/next-batch (:t pending) arrival-fn
-                                  (store/gete ctx :parameters :default-behavior))]
+           new-batch    (next-batch (:t pending))]
        (->> ctx
             (services/handle-arrivals (:t pending) new-entities)
             (services/schedule-arrivals new-batch)))

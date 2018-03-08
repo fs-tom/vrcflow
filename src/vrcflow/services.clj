@@ -415,12 +415,27 @@
        (store/assoce ctx :arrival :pending)
        (sim/request-update (:t batch) :arrival :arrival)))
 
+;;In this case, we have a batch of multiple entities
+;;known a-priori.  The associated value for {:batch v}
+;;is a vector, not a match describing the stochastic
+;;batch parameters.
+(declare handle-arrivals)
 (defn schedule-multiple-arrivals
-  "Given batches, schedules new arrivals for ctx."
+  "Given a vector batches, schedules new arrivals for ctx."
   [batches ctx]
-  (println [:scheduling-multiple-arrivals!]
-  (reduce #(schedule-arrival %2 %1) ctx batches)))
+  (let [batch->entities (or (store/gete ctx :parameters :batch->entities)
+                            batch->entities)]
+    (reduce (fn [ctx {:keys [t batch] :as b}]
+              (let [es (batch->entities b)
+                    _ (debug [:scheduling (count batch) :entities :at t])
+                    ]
+                (handle-arrivals  t es ctx)))
+            ctx
+            batches)))
 
+;;can we pre-bake multiple arrivals?
+;;We already know when they're coming in,
+;;can we just formalize the calls that'd normally happen?
 (defn schedule-arrivals
   "Given a batch order, schedules new arrivals for ctx."
   [batch ctx]
@@ -438,7 +453,7 @@
   "Pulls out the next arrival batch from the :arrival entity, 
    consuming the update in the process."
   [t new-entities ctx]
-  (-> ctx 
+  (-> ctx
       (sim/drop-update :arrival t :arrival) ;eliminate current update.
       (store/add-entities new-entities) ;;add new entities.
       ;;TODO: fix add-updates in spork.sim.simcontext....we're getting transient
@@ -446,7 +461,7 @@
       (add-updates             ;;request updates.
        (for [e new-entities]
          [t (:name e) :client]
-         )))) 
+         ))))
 
 (defn add-client [provider id ctx]
   (store/updatee ctx provider :clients conj id))
