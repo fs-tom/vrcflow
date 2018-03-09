@@ -102,8 +102,8 @@
 ;;make it exponentially hard to have each additional need?
 (befn compute-needs {:keys [ctx entity parameters] :as benv} 
       (let [needs-fn (get parameters :needs-fn services/random-needs)
-            needs    (:known-needs @entity)] ;;if the entity has known-needs, use them.
-        (alter-entity {:needs (or needs (needs-fn))})))
+            #_needs    #_(:known-needs @entity)] ;;if the entity has known-needs, use them. ;;taking this out for now.
+        (alter-entity {:needs (needs-fn) #_(or needs (needs-fn))})))
 
 ;;Sets the entity's upper bound on waiting
 (befn reset-wait-time {:keys [entity ctx] :as benv}

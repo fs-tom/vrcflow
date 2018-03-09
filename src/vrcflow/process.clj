@@ -174,12 +174,19 @@
              :else (throw (Exception.
                            "Number of children selected must be <= total children!")))))))
 
-(defn pre-processed
-  "Find any pre-"
-  [e process-name]
-  (-> e :pre-processed (get process-name)))
+(defn get-pre-processed
+  "Find any pre-processed service selections, indicatingx that the client
+   has over-ridden the default processing pipeline for a service."
+  [ent process-name]
+  (-> ent :pre-processed (get process-name)))
 
-(defn add-pre-proceesed [e process-name children])
+(defn add-pre-proceesed
+  "Add a set of pre-processed children for a
+   process name."
+  [ent process-name children]
+  (let [procs (or (get-pre-processed ent process-name) [])
+        procs (into procs children)]
+    (assoc-in ent [:pre-processed process-name] procs)))
 
 ;;now we can define child selectors that sample without replacement
 ;;or with replacement.  Our typical use case is without replacement
