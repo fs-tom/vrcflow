@@ -228,7 +228,7 @@
           random-select    (resolve-n selector children n)
           select-children  (fn entity-children
                              ([e]
-                              (if-let [xs (pre-processed e process-name)]
+                              (if-let [xs (get-pre-processed e process-name)]
                                 xs
                                 (random-select)))
                              ([] (random-select)))]

@@ -271,10 +271,11 @@
 ;;This is using our step-function step, to simulate a random day at
 ;;60 minutes * 8 hours / minute .
 (defn step-day
-  ([seed] (history/state-stream seed
-                                :tmax (* 60 8)
+  ([tmax seed] (history/state-stream seed
+                                :tmax tmax
                                 :step-function step
                                 :keep-simulating? (fn [_] true)))
+  ([seed]       (step-day seed (* 60 8)))
   ([] (step-day (sim/advance-time (seed-ctx)))))
 
 (def errs (atom nil))
@@ -311,9 +312,10 @@
    (fn [_] (samplef (step-day
                      (or seed (seed-ctx :initial-arrivals nil)))))  (range n)))
 
-(defn client-quantities-view [& {:keys [seed]}]
+(defn client-quantities-view [& {:keys [seed tmax]
+                                 :or {tmax (* 60 8)}}]
   (->> (or seed (seed-ctx :initial-arrivals nil))
-       (step-day)
+       (step-day tmax)
        (map analysis/frame->clients)
        (analysis/client-quantities->chart)
        (i/view)))

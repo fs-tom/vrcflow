@@ -51,6 +51,7 @@
   ["ENTER" ;orange
    "JRPC Holding Area"  ;copper
    "Waiting"  ;dark-green
+   "WAIT" ;dark-green
    "Needs Assessment" ;light-blue
    "Fast Track Processing" ;dark-blue
    "Standard Processing"  ;amber
@@ -119,6 +120,7 @@
   {"ENTER" :orange
    "JRPC Holding Area"  :light-grey
    "Waiting"  :dark-green
+   "WAIT"  :dark-green
    "Needs Assessment" :light-blue
    "Fast Track Processing" :dark-blue
    "Standard Processing"  :amber
@@ -133,7 +135,8 @@
    "Legal" :violet
    "End Family Services" :light-green
    "CTO" :grey
-   "Clearance" :sea-green
+   "Clearance" :dark-red
+   
    "Produce Orders" :purple
    "Shared Services & Volunteers"  :black
    "Triage And Sort" :black
