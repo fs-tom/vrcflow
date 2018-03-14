@@ -5,6 +5,7 @@
                [charts :as c]
                [stats :as s]]              
               [spork.sim  [core :as core]]
+              [spork.util [temporal :as temp]]
               [vrcflow [services :as services]
                        [data :as data]
                        [stacked :as stacked]]))
@@ -41,12 +42,72 @@
 ;;locations.
 (defn frame->clients [[t ctx]]
   (->> (services/clients ctx)
-       (mapv #(hash-map :t t :location (derive-location %)))))
+       (mapv #(hash-map :t t :location (derive-location %) :size (or (:size %) 1)))))
+
+#_(def last-samples (atom nil))
+
+;;want to include the ability to show clients....
+(def ^:dynamic *use-size* nil)
+(defn group-size [gr]
+  (if-not *use-size*
+    (count gr)
+    (reduce + 0 (map :size gr))))
+
+(defn location-samples [xs]
+  (vec (for [sample xs
+             [loc gr] (group-by :location sample)]
+         {:t (:t (first gr)) :quantity (group-size gr)  #_(count gr)
+          :location (or loc "empty")})))
+
+(defn locations->map [xs]
+  (reduce (fn [acc {:keys [t quantity location]}]
+           (assoc acc location quantity))
+          {} xs))
+
+;;weak experiment in making better sampled flows.
+;; (defn add-begin-points [t xs]
+;;   (map (fn [r]
+;;          (assoc r :t t :quantity 0)) xs))
+
+;; (defn add-end-points [tprev t dropped? xs]
+;;   (concat (map (fn [r]
+;;                  (assoc r :t tprev)) xs)
+;;           #_(map (fn [r]
+;;                  (assoc r :t t :quantity (if (dropped? r) 0
+;;                                              (:quantity r)))) xs)))
+
+;; (defn accrue-locs [[accumulated final :as acc] [ls rs]]
+;;   (let [tl (:t (first ls))
+;;         tr (:t (first rs))
+;;         lm     (locations->map ls)
+;;         rm     (locations->map  rs)
+;;         {:keys [dropped added] :as diffs}  (diff/diff-map lm rm)
+;;         added (into #{} (map first added))
+;;         trminus  (- tr 0.001)]
+;;                                         ;diffs
+;;     [(concat accumulated
+;;              ls 
+;;             ;;if we drop anything, we need to add an end-point.
+;;             (when (seq added)
+;;               (add-begin-points tl (filter #(added (:location %)) rs)) ;;zeroes at tl
+;;               )
+;;                                         ;(when (seq dropped)
+;;             (add-end-points trminus tr #(dropped (:location %)) ls)
+;;             )
+;;      rs];;zeroes at tr - 0.001
+;;     #_rs))
+
+;; (defn location-diffs [xs]
+;;   (->>  (partition 2 1 (partition-by :t xs))
+;;         (reduce accrue-locs [nil nil])
+;;         ((fn [[xs final]]
+;;            (println (:t (first final)))
+;;            (concat xs final)))))
 
 (defn location-quantities->chart [xs]
   (-> (->>  (for [{:keys [t trends]} xs
-                  [provider {:keys [utilization]}] trends]
-              {:t t :utilization utilization :provider provider})
+                         [provider {:keys [utilization]}] trends]
+                     {:t t :utilization utilization :provider provider})
             (i/dataset [:t :utilization :provider])
             (i/$rollup :sum  :utilization [:t :provider]))
       (stacked/->stacked-area-chart  :row-field :t :col-field :provider
@@ -58,17 +119,19 @@
                                      :color-by data/provider-colors)))
 
 (defn client-quantities->chart [xs]
-  (-> (->>  (for [sample xs
-                  [loc gr] (group-by :location sample)]
-              {:t (:t (first gr)) :quantity (count gr) :location (or loc "empty")})
+  (-> (->>  xs
+            (location-samples)
             (i/dataset [:t :quantity :location])
-            (i/$rollup :sum  :quantity [:t :location]))
-      
+            (i/$rollup :sum  :quantity [:t :location]))      
       (stacked/->stacked-area-chart  :row-field :t :col-field :location
                                      :values-field :quantity
-                                     :title "Clients Located by Time"
+                                     :title (if *use-size*
+                                              "Clients + Dependents Located by Time"
+                                              "Clients Located by Time")
                                      :x-label "Time (minutes)"
-                                     :y-label "Quantity (clients)"
+                                     :y-label (if *use-size*
+                                                "Quantity (clients + dependents)"
+                                                "Quantity (clients)")
                                      :tickwidth 60
                                      :order-by (stacked/as-order-function  data/provider-order)
                                      :color-by data/provider-colors)))

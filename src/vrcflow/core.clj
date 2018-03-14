@@ -306,19 +306,22 @@
 ;;Beware: calling samples with a large function and sticking
 ;;in a vector can be deleterious to memory at the moment!
 ;;Much better to stream.
-(defn samples [n & {:keys [seed serial? samplef]
-                    :or {samplef vec}}]
+(defn samples [n & {:keys [seed serial? samplef tmax]
+                    :or {samplef vec
+                         tmax (* 60 8)}}]
   ((if serial? map pmap) 
    (fn [_] (samplef (step-day
+                     tmax
                      (or seed (seed-ctx :initial-arrivals nil)))))  (range n)))
 
-(defn client-quantities-view [& {:keys [seed tmax]
+(defn client-quantities-view [& {:keys [seed tmax size?]
                                  :or {tmax (* 60 8)}}]
-  (->> (or seed (seed-ctx :initial-arrivals nil))
-       (step-day tmax)
-       (map analysis/frame->clients)
-       (analysis/client-quantities->chart)
-       (i/view)))
+  (binding [vrcflow.analysis/*use-size* size?]
+    (->> (or seed (seed-ctx :initial-arrivals nil))
+         (step-day tmax)
+         (map analysis/frame->clients)
+         (analysis/client-quantities->chart)
+         (i/view))))
 
 (defn non-zeroes [m]
   (into {} 
@@ -326,8 +329,9 @@
               :when (not (zero? (reduce + xs)))]
           [k xs])))
                
-(defn mean-utilization-view [& {:keys [n seed serial? non-zeroes?] :or {n 30 non-zeroes? true}}]
-  (->> (samples n :seed seed :serial? serial?)
+(defn mean-utilization-view [& {:keys [n seed serial? non-zeroes? tmax]
+                                :or {n 30 non-zeroes? true tmax (* 60 8)}}]
+  (->> (samples n :seed seed :serial? serial? :tmax tmax)
        (analysis/hs->mean-utilizations)
        (#(if non-zeroes? (non-zeroes %) %))
        (analysis/utilization-plots)
