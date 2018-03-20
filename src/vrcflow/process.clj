@@ -139,13 +139,68 @@
                        (:clear))]
     (do (f) nd)))
 
+;;This is a work-around for the sampling
+;;functions from spork.utils.stats used in spork.util.sampling.
+;;We ran into a problem with thread-safety and secondarily
+;;preserving semantics of non-replacing draws when dealing
+;;with necessarily? stateful sampling functitons like
+;;non-replacing samples.  The answer is to
+;;batch samples explicitly - creating an independent sampling
+;;function for every batch - and to treat individual samples
+;;as accessing a shared resource via an agent.  This allows
+;;both use cases to proceed unimpeded, preserving correctness
+;;across threads as well.  So, we have a centrally-managed,
+;;asynchronous resource, along with decentralized, isolated
+;;batch sampling if desired.  Note: preformance-wise,
+;;if isolated samples are acceptable, it's much faster to
+;;use an arg of 1 than to engage the message-queue of the
+;;agent...
+(defn generic-sampler
+  [xs & {:keys [replacement?]}]
+  (let [f (case [(map? xs) (boolean replacement?)] 
+            [true true]  spork.util.stats/weighted-samples
+            [true false] spork.util.stats/non-replacing-weighted-samples
+            [false true]  s/sample-nth
+            [false false] spork.util.stats/non-replacing-samples
+            (throw (Exception. (str [:unknown-sampling [:map? :replacement?]
+                                     [(map? xs) replacement?]]))))]
+    (if (or (identical? f spork.util.stats/non-replacing-weighted-samples)
+            (identical? f spork.util.stats/non-replacing-samples))
+      ;;stateful functions that may be susceptible to race-conditions.
+      (let [draw    (f xs)
+            agt     (agent draw)
+            draw!   (fn draw! []
+                      (let [p  (promise)] 
+                        (send agt (fn [d]
+                                    (do (deliver p (d))
+                                        d)))             
+                        @p))
+            clear! (fn clear! []                     
+                     (send agt (fn [d] (d :clear)))
+                     (await agt))]
+      (fn sample!
+        ([] (draw!))
+        ([n] (cond (number? n) (let [g (f xs)]
+                                 (vec (repeatedly n g)))
+                   (identical? n :clear) (do (clear!) nil)
+                   :else (throw (Exception. (str [:expected-number-or-clear n])))))))
+      (let [sampler (f xs)]
+        ;;no state required.
+        (fn sample!
+          ([]   (sampler))
+          ;;instead of sharing state, we just build a sampler and batch the mofo.
+          ([n] (vec (repeatedly n sampler))))))))
+
 ;;This is a combination 
-(defn ->batch-sampler [n sampler]
+#_(defn ->batch-sampler [n sampler]
   (->> sampler
        (s/->replications n)
        (s/->transform (fn [nd] (clear! sampler) nd))))
 
-(defn select-by
+;;eliding this, using our custom sampler...
+;;no need for a rules corpus here.
+
+#_(defn select-by
   [body sampler n]
    (->> sampler
         (->batch-sampler n)
@@ -155,22 +210,23 @@
 ;;we can probably pre-process the corpus...
 ;;rules get applied as functions to the context.
 (defn child-selector [xs n & {:keys [replacement?]}]
-  (let [sampler  (if replacement?
+  (let [sampler  #_(if replacement?
                    (s/->choice xs)
                    (s/->without-replacement xs))
-        body (if (map? xs)
-               (zipmap (keys xs) (keys xs))
-               (zipmap xs xs))
+                 (generic-sampler xs)
+        ;body (if (map? xs)
+        ;       (zipmap (keys xs) (keys xs))
+        ;       (zipmap xs xs))
         maxn  (count xs)
         entries (if (map? xs) (vals xs) xs)
         fst     (first entries)
         _       (assert (<= n maxn) "Number of children selected must be <= total children!")]
     (fn select
-      ([] (select-by body sampler n))
+      ([] (sampler n) #_(select-by body sampler n))
       ([k]
        (cond (= maxn 1 k) fst
              (= maxn k)   entries ;;automatically selects all.
-             (< k maxn)   (select-by body sampler k)
+             (< k maxn)   (sampler k) #_(select-by body sampler k)
              :else (throw (Exception.
                            "Number of children selected must be <= total children!")))))))
 
