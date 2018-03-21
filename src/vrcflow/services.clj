@@ -339,9 +339,17 @@
                  waiting)
          (store/mergee db :waiting-list))))
 
+
+;;this is the prototypical stochastic batch function
+;;for generating randomly-arriving entities of
+;;variable size.  The original implementation
+;;focused on variable-sized and variable-timed
+;;batches as a function of interarrival-times
+;;and random batch-sizes...
+
 ;;generate an update for itself the next time...
 ;;next-batch now accepts a size
-(defn next-batch
+(defn generate-batch
   "Given a start time t, and an interarrival time
    function f::nil->number, generates a map of 
    {:n arrival-count :t next-arrival-time} where t 

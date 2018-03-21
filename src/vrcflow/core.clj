@@ -67,9 +67,15 @@
          next-size    (if (number? batch-size)
                         (let [n (long batch-size)] (fn next-size [] n))
                         (fn next-size    [] (long (batch-size))))
-         next-batch   (fn next-batch   [t]
+         ;;default batching function assumes current-time and builds
+         ;;a batch stochastically based on random interarrival time
+         ;;and random batch-size (if specified).
+         ;;next-batch should take 2 arity, t and ctx, to allow
+         ;;other batch functions to access the context, say to
+         ;;compute deferred batches (pre-scheduled arrivals).
+         next-batch   (fn next-batch   [t ctx]
                           (services/next-batch t
-                           next-arrival next-size default-behavior))]
+                              next-arrival next-size default-behavior))]
      (->>  ctx 
            (sim/merge-entity  {:arrival {:arrival-fn next-arrival
                                          :batch-size next-size
@@ -78,7 +84,7 @@
                                             :service-network  service-network}})
            (services/schedule-arrivals
             (or initial-arrivals
-                (next-batch (sim/get-time ctx)))
+                (next-batch (sim/get-time ctx) ctx))
               #_(services/next-batch (sim/get-time ctx) f default-behavior))
            (services/register-providers service-network)
            )))
@@ -101,7 +107,7 @@
            arr    (store/get-entity ctx :arrival) ;;known entity arrivals...
            {:keys [pending arrival-fn next-batch]}    arr
            new-entities (batch->entities pending)
-           new-batch    (next-batch (:t pending))]
+           new-batch    (next-batch (:t pending) ctx)]
        (->> ctx
             (services/handle-arrivals (:t pending) new-entities)
             (services/schedule-arrivals new-batch)))
