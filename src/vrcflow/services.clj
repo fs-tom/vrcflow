@@ -349,7 +349,7 @@
 
 ;;generate an update for itself the next time...
 ;;next-batch now accepts a size
-(defn generate-batch
+(defn next-batch
   "Given a start time t, and an interarrival time
    function f::nil->number, generates a map of 
    {:n arrival-count :t next-arrival-time} where t 
@@ -444,12 +444,22 @@
 ;;can we pre-bake multiple arrivals?
 ;;We already know when they're coming in,
 ;;can we just formalize the calls that'd normally happen?
-(defn schedule-arrivals
+#_(defn schedule-arrivals
   "Given a batch order, schedules new arrivals for ctx."
   [batch ctx]
   (cond (map? batch)  (schedule-arrival batch ctx)
         (seq? batch)  (schedule-multiple-arrivals batch ctx)
         :else (throw  (Exception. (str [:unknown-batch-type (type batch)])))))
+
+(defn schedule-arrivals [batches ctx]
+  (let [{:keys [pending arrival-fn next-batch remaining]
+         :as arr}  (store/get-entity ctx :arrival)
+        head       (first batches)
+        remaining  (rest :batches)]
+    (->> head
+         (ensure-behavior ctx)
+         (assoc arr :remaining remaining :pending)
+         (store/add-entity ctx :arrival))))
 
 ;;;temporary hack/shim...
 (defn add-updates [ctx xs]
