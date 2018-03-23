@@ -451,14 +451,17 @@
         (seq? batch)  (schedule-multiple-arrivals batch ctx)
         :else (throw  (Exception. (str [:unknown-batch-type (type batch)])))))
 
+;;Assumes we have a sequence of batches to schedule.
+;;Registers the batches with the :arrival entity under
+;;:pending.  Do we want to ensure sorted?
+;;That is, if it's a batch generator, then we
+;;automatically get sorted order....
 (defn schedule-arrivals [batches ctx]
   (let [{:keys [pending arrival-fn next-batch remaining]
-         :as arr}  (store/get-entity ctx :arrival)
-        head       (first batches)
-        remaining  (rest :batches)]
-    (->> head
+         :as arr}  (store/get-entity ctx :arrival)]
+    (->> batches
          (ensure-behavior ctx)
-         (assoc arr :remaining remaining :pending)
+         (assoc arr :pending)
          (store/add-entity ctx :arrival))))
 
 ;;;temporary hack/shim...
