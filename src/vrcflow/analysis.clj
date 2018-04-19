@@ -107,7 +107,7 @@
 (defn location-quantities->chart [xs]
   (-> (->>  (for [{:keys [t trends]} xs
                          [provider {:keys [utilization]}] trends]
-                     {:t t :utilization utilization :provider provider})
+                 {:t t :utilization utilization :provider provider})
             (i/dataset [:t :utilization :provider])
             (i/$rollup :sum  :utilization [:t :provider]))
       (stacked/->stacked-area-chart  :row-field :t :col-field :provider
@@ -153,7 +153,7 @@
          [gr (s/mean (map :utilization xs))])
        (reduce (fn [acc [gr x]]
                  (assoc acc gr (conj (get acc gr []) x)))
-               {} )))
+               {})))
 
 (defn utilization-plots
   [means]
@@ -164,7 +164,8 @@
                              :x-label ""
                              :y-label "Percent Utilization"
                              :series-label gr
-                             :title "Utilization by Provider")))]
+                             :title "Utilization by Provider"
+                             :category-label "Utilization")))]
      (doseq [[gr xs] (rest means)]
-       (c/add-box-plot the-plot xs :series-label gr))
+       (c/add-box-plot the-plot xs :series-label gr :category-label "Utilization"))
      the-plot))
