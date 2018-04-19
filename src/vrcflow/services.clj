@@ -444,7 +444,7 @@
 ;;can we pre-bake multiple arrivals?
 ;;We already know when they're coming in,
 ;;can we just formalize the calls that'd normally happen?
-#_(defn schedule-arrivals
+(defn schedule-arrivals
   "Given a batch order, schedules new arrivals for ctx."
   [batch ctx]
   (cond (map? batch)  (schedule-arrival batch ctx)
@@ -456,11 +456,11 @@
 ;;:pending.  Do we want to ensure sorted?
 ;;That is, if it's a batch generator, then we
 ;;automatically get sorted order....
-(defn schedule-arrivals [batches ctx]
+(defn schedule-multiple-arrivals [batches ctx]
   (let [{:keys [pending arrival-fn next-batch remaining]
          :as arr}  (store/get-entity ctx :arrival)]
     (->> batches
-         (ensure-behavior ctx)
+         (map #(ensure-behavior ctx %))
          (assoc arr :pending)
          (store/add-entity ctx :arrival))))
 
