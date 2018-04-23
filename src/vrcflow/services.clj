@@ -451,6 +451,9 @@
         (seq? batch)  (schedule-multiple-arrivals batch ctx)
         :else (throw  (Exception. (str [:unknown-batch-type (type batch)])))))
 
+(defn positive-number? [n]
+  (some-> n (complement neg?)))
+
 ;;Assumes we have a sequence of batches to schedule.
 ;;Registers the batches with the :arrival entity under
 ;;:pending.  Do we want to ensure sorted?
@@ -458,11 +461,15 @@
 ;;automatically get sorted order....
 (defn schedule-multiple-arrivals [batches ctx]
   (let [{:keys [pending arrival-fn next-batch remaining]
-         :as arr}  (store/get-entity ctx :arrival)]
+         :as arr}  (store/get-entity ctx :arrival)
+        tfirst (:t (first batches))
+        _      (assert (positive-number? tfirst)
+                 "first batch-time MUST be a non-neg")]
     (->> batches
          (map #(ensure-behavior ctx %))
          (assoc arr :pending)
-         (store/add-entity ctx :arrival))))
+         (store/add-entity ctx :arrival)
+         (sim/request-update tfirst :arrival :arrival))))
 
 ;;;temporary hack/shim...
 (defn add-updates [ctx xs]

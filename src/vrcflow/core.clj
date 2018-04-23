@@ -268,7 +268,7 @@
 ;;If no arrivals are provided, defaults to 10 at t = 1.
 (defn seed-ctx
   [& {:keys [initial-arrivals]
-      :or {initial-arrivals {:n 10 :t 1}}}]
+      :or {initial-arrivals [{:n 10 :t 1}]}}]
   (->> (init (core/debug! emptysim) :initial-arrivals initial-arrivals
              :default-behavior beh/client-beh)
        (begin-t)
