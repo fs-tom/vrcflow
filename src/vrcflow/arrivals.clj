@@ -2,7 +2,8 @@
 ;;be pre-determined (ala an arrivals file or sequence) or
 ;;stochastically-generated (via variable interarrival and batch-size fns.)
 (ns vrcflow.arrivals
-  (:require [spork.entitysystem.store :as store]))
+  (:require [spork.entitysystem.store :as store]
+            [vrcflow.services :as services]))
 
 ;;What's a batch? Batches basically describe the arrival of one or more entities
 ;;into the system at a point in time. At a minimum, we want to know: t - when
@@ -465,6 +466,121 @@
 
 ;;Both static and dynamic schedules reify down to an interleaved sequence of
 ;;entity orders by time. This is the entity schedule.
+
+
+;;Basic protocols
+;;===============
+(defprotocol IPrimitiveBatchSchedule
+  (next-batch    [schd])
+  (current-batch [schd]))
+
+;;say we have static entities from an arrivals file,
+;;or some other source.
+(def ents
+  [{:t 1 :entities [{:name :bilbo
+                     :age 180}
+                    {:name :sam
+                     :age 182}
+                    {:name :grimlock
+                     :age  :me-grimlock-me-no-care}]}
+   {:t 50 :entities [{:name :foxy
+                      :age 2}
+                     {:name :beowulf
+                      :age 2}
+                     {:name :hearty
+                      :age  :3}]}])
+
+;;This conveys two batches of 3 entities a-piece.
+;;We'd like to load these into an arrivals schedule.
+
+;;The simplest implementation is to create an entity
+(def the-schedule
+  {:name    :some-arrival-schedule
+   :pending ents
+   :tstart (first (map :t ents))
+   })
+
+;;if we have an entity for :arrival, we can register the-schedule
+;;as a schedule...
+
+(def arrival-entity
+  {:name :arrival
+   :schedules {:some-arrival-schedule the-schedule}})
+
+;;Now when we process arrivals, we break up the op into two phases...
+;;old...
+#_(defn process-arrivals
+  "The arrivals system processes batches of entities and schedules more arrival
+   updates.  batch->entities should be a function that maps a batch, 
+   {:t long :n long} -> [entity*]"
+  ([batch->entities ctx]
+   (if-let [arrivals? (seq (sim/get-updates :arrival (sim/current-time ctx) ctx))]
+     (let [_      (debug "[<<<<<<Processing Arrivals!>>>>>>]")
+           arr    (store/get-entity ctx :arrival) ;;known entity arrivals...
+           {:keys [pending arrival-fn next-batch]}    arr
+           new-entities (batch->entities pending)
+           new-batch    (next-batch (:t pending) ctx)]
+       (->> ctx
+            (services/handle-arrivals (:t pending) new-entities)
+            (services/schedule-arrivals new-batch)))
+     (do (spork.ai.core/debug "No arrivals!")
+         ctx)))
+  ([ctx] (process-arrivals (or (store/gete ctx :parameters :batch->entities)
+                               services/batch->entities) ctx)))
+
+;;in services..
+;;If we have active-schedules, they have batches.
+;;we need to pop the next batch from the each schedule.
+;;This will produce a new schedule, and in turn,
+;;request.  compute the entity batches, new updates, and updated
+;;schedules.
+(defn pop-batches
+  "Given a context, and entity realization function, and selected schedule entities,
+   computes a map of {:keys [entities updates schedules]}
+   to provide "
+  [ctx batch->entities schedules]
+  ;;we need to traverse each schedule.
+  ;;get the next-batch.
+  ;;get the next-schedule (if any)
+  ;;Compute a map of
+  {:entities  entities
+   :updates   updates
+   :schedules new-schedules})
+
+;;in services...
+(defn active-schedules [ctx t schedule-names]
+  (store/select-entities ctx
+     :from [:schedule]
+     :where (fn [e] (= (:t e) t))))
+
+;;new....
+(defn process-arrivals
+  "The arrivals system processes batches of entities and schedules more arrival
+   updates.  batch->entities should be a function that maps a batch, 
+   {:t long :n long} -> [entity*]"
+  ([batch->entities ctx]
+   (if-let [arrivals? (seq (sim/get-updates :arrival (sim/current-time ctx) ctx))]
+     (let [_      (debug "[<<<<<<Processing Arrivals!>>>>>>]")
+           ;;look up the schedules in arrivals for entities.
+           schedules (services/active-schedules ctx
+                        (sim/current-time ctx)
+                        (store/gete ctx :arrival :schedules))
+           ;;compute the entity batches, new updates, and updated schedules.
+           {:keys [entities updates schedules]}
+               (services/pop-batches ctx batch->entities schedules)]
+       (as-> newctx ctx
+         (request-updates :arrival updates newctx) ;merge arrival  updates.
+         (merge-entities newctx schedules)         ;merge new schedules.
+         ;;process the entities from the batches in the new context.
+         (services/handle-arrivals newctx t new-entities entities)))
+     (do (spork.ai.core/debug "No arrivals!")
+         ctx)))
+  ([ctx] (process-arrivals (or (store/gete ctx :parameters :batch->entities)
+                               services/batch->entities) ctx)))
+
+
+
+
 
 
 
