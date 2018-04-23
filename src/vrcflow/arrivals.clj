@@ -535,17 +535,22 @@
 ;;request.  compute the entity batches, new updates, and updated
 ;;schedules.
 (defn pop-batches
-  "Given a context, and entity realization function, and selected schedule entities,
-   computes a map of {:keys [entities updates schedules]}
-   to provide "
+  "Given a context, and entity realization function, and selected schedule
+  entities, computes a map of {:keys [entities updates schedules]}"
   [ctx batch->entities schedules]
+  (reduce (fn [{:keys [entities updates schedules ctx]} sched]
+            (let [b                (first-batch sched)
+                  [new-sched ctx]  (pop-batch sched ctx)]
+              {:entities  (into entities (batch->entities b))
+               :updates   (assoc updates (:name sched)
+                                 (:tnext (first-batch new-sched)))
+               :schedules (conj schedules new-sched)
+               :ctx ctx})) 
   ;;we need to traverse each schedule.
   ;;get the next-batch.
   ;;get the next-schedule (if any)
   ;;Compute a map of
-  {:entities  entities
-   :updates   updates
-   :schedules new-schedules})
+          {:entities  [] :updates   {} :schedules [] :ctx ctx}) schedules)
 
 ;;in services...
 (defn active-schedules [ctx t schedule-names]
