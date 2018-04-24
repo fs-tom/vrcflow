@@ -25,6 +25,44 @@
 ;;interarrival-times and random batch-sizes... generate an update for itself the
 ;;next time... next-batch now accepts a size
 
+#_(defn next-batch
+  "Given a start time t, and an interarrival time
+   function f::nil->number, generates a map of
+   {:n arrival-count :t next-arrival-time} where t
+   is computed by sampling from f, such that the
+   interarrival time is non-zero.  Zero-values
+   are aggregated into the batch via incrementing
+   n, accounting for concurrent arrivals (i.e. batches)."
+  ([t f]
+   (loop [dt (f)
+          acc 1]
+     (if (pos? dt)
+       {:n acc :t (+ dt t)}
+       (recur (f) (inc acc)))))
+  ([t f b] (assoc (next-batch t f) :behavior b))
+  ([t f size-f b]
+   (-> (loop [dt (f)
+              acc (size-f)]
+         (if (pos? dt)
+           {:n acc :t (+ dt t)}
+           (recur (f) (+ acc (size-f)))))
+       (assoc  :behavior b))))
+
+
+;;we should decouple the absolute time from the deltat...
+;;rather than generating an exact time, just generate
+;;the batch-size and deltat....
+;;We can tack on the exact time in a later step...
+
+;;break down batch generation into a few discrete steps:
+;;We need to know how big the batch is.
+;;when it's arriving...
+;;That information alone is enough for a higher-order fn
+;;to interpret into a set of entities arriving at
+;;an absolute time.
+
+
+
 (defn next-batch
   "Given a start time t, and an interarrival time
    function f::nil->number, generates a map of
@@ -47,6 +85,7 @@
            {:n acc :t (+ dt t)}
            (recur (f) (+ acc (size-f)))))
        (assoc  :behavior b))))
+
 
 ;;The default implementation of batch->entities
 ;;uses this specification to generate n entities....
@@ -528,6 +567,22 @@
   ([ctx] (process-arrivals (or (store/gete ctx :parameters :batch->entities)
                                services/batch->entities) ctx)))
 
+#_(defprotocol IBatchProvider
+  (peek-batch [o])
+  (pop-batch  [o]))
+
+;;assuming random-batch has...
+(defn ->random-batch [size frequency]
+  )
+
+;;currently, random batches are maps.
+;;constant batches are sequences of primitive entities.
+(defn peek-batch [m t ctx]
+  (if (map? m)
+    (next-batch )))
+(defn pop-batch [m]
+  )
+
 ;;in services..
 ;;If we have active-schedules, they have batches.
 ;;we need to pop the next batch from the each schedule.
@@ -539,8 +594,8 @@
   entities, computes a map of {:keys [entities updates schedules]}"
   [ctx batch->entities schedules]
   (reduce (fn [{:keys [entities updates schedules ctx]} sched]
-            (let [b                (first-batch sched)
-                  [new-sched ctx]  (pop-batch sched ctx)]
+            (let [b                (peek-batch sched)
+                  [new-sched ctx]  (pop-batch sched)]
               {:entities  (into entities (batch->entities b))
                :updates   (assoc updates (:name sched)
                                  (:tnext (first-batch new-sched)))
