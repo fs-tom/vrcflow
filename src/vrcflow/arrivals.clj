@@ -567,21 +567,109 @@
   ([ctx] (process-arrivals (or (store/gete ctx :parameters :batch->entities)
                                services/batch->entities) ctx)))
 
-#_(defprotocol IBatchProvider
+(defprotocol IBatchProvider
   (peek-batch [o])
   (pop-batch  [o]))
 
-;;assuming random-batch has...
-(defn ->random-batch [size frequency]
-  )
+;;do we compute the arrival time first?
+;;If we have identical arrival times (dt = 0),
+;;we need to consolidate the batches....
+;;implication of multiple dt=0, is that
+;;batches are arriving concurrently.
+;;When we hit a dt <> 0, then we have future
+;;batch...
+(defn ->random-batch
+  ([f size-f]
+   (-> (loop [dt  (f)
+              acc (size-f)]
+         (if (pos? dt)
+           {:n acc :dt dt}
+           (recur (f) (+ acc (size-f)))))))
+  ([f]   (-> (loop [dt  (f)
+                    acc 1]
+               (if (pos? dt)
+                 {:n acc :dt dt}
+                 (recur (f) (inc acc)))))))
+;;given a start-time, and an extant delay, dt,
+;;associates the start-time with t in the map.
+(defn offset [t {:keys [dt] :as b}]
+  (assoc b :t (+ dt t )))
+
+(defn variable [n]
+  (cond (fn? n) n
+        (number? n) (fn [] n)
+        :else (ex-info "requires fn or numeric constant!" {})))
+
+(defn next-batch
+  "Given a start time t, and an interarrival time
+   function f::nil->number, generates a map of
+   {:n arrival-count :t next-arrival-time} where t
+   is computed by sampling from f, such that the
+   interarrival time is non-zero.  Zero-values
+   are aggregated into the batch via incrementing
+   n, accounting for concurrent arrivals (i.e. batches)."
+  ([t interarrival]
+   (->> (->random-batch (variable interarrival))
+        (offset t )))
+  ;;complecting...I think batch->entities should handle behavior...
+  ([t f b] (assoc (next-batch t f) :behavior b))
+  ([t interarrival size b]
+   (as-> (->random-batch (variable interarrival) (variable size)) it
+         (offset t it)
+         (assoc it :behavior b))))
 
 ;;currently, random batches are maps.
 ;;constant batches are sequences of primitive entities.
-(defn peek-batch [m t ctx]
-  (if (map? m)
-    (next-batch )))
-(defn pop-batch [m]
-  )
+(defn peek-batch-map [m]
+  (:pending m))
+
+(defn push-batch-map [m b]
+  (let [newm (assoc m :pending b)]
+    (if-not (:capacity m)
+      newm
+      (update newm :capacity - (:n b)))))
+
+(defn pop-batch-map [m]
+ (let [b (peek-batch m)]
+   (->> (gen-batch (:t b) m)
+        (push-batch-map m))))
+
+;;We can compute a successive batch from a seed
+(defrecord batchseed [tstart tstop interarrival size  capacity behavior]
+  IBatchProvider
+  (peek-batch [o] (peek-batch-map o))
+  (pop-batch  [o] (pop-batch-map o)))
+
+;;this works for persistent, immutable batches.
+(defn gen-batch
+  ([t {:keys [tstart tstop interarrival size capacity beh]}]
+   (when (and  (>= t tstart)
+               (or (not tstop) (< t tstop)))
+     (let [b (next-batch t interarrival size beh)]
+       (if-not capacity b
+               (let [n (:n b)
+                     delta (- capacity n)]
+                 (if (pos? delta)
+                   b
+                   (assoc b :n capacity)))))))
+  ([b] (gen-batch 0 bt)))
+
+(defn ->random-schedule [& {:keys [tstart tstop interarrival size  capacity behavior]
+                            :or {tstart 0
+                                 size   1}}]
+  (let [b (->batchseed tstart
+                       tstop
+                       interarrival
+                       size
+                       capacity
+                       behavior)]
+    (assoc b :pending (gen-batch tstart b))))
+
+(defn finite-schedule [bt]
+  (->> bt
+       (iterate pop-batch)
+       (take-while :pending)
+       (map :pending)))
 
 ;;in services..
 ;;If we have active-schedules, they have batches.
@@ -595,13 +683,13 @@
   [ctx batch->entities schedules]
   (reduce (fn [{:keys [entities updates schedules ctx]} sched]
             (let [b                (peek-batch sched)
-                  [new-sched ctx]  (pop-batch sched)]
+                  new-sched        (pop-batch  sched)]
               {:entities  (into entities (batch->entities b))
                :updates   (assoc updates (:name sched)
                                  (:tnext (first-batch new-sched)))
                :schedules (conj schedules new-sched)
-               :ctx ctx})) 
-  ;;we need to traverse each schedule.
+               :ctx ctx}))
+   ;;we need to traverse each schedule.
   ;;get the next-batch.
   ;;get the next-schedule (if any)
   ;;Compute a map of
