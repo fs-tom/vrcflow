@@ -4,7 +4,7 @@
 (ns vrcflow.arrivals
   (:require [spork.entitysystem.store :as store]
             [vrcflow.services :as services]))
-
+(comment 
 ;;What's a batch? Batches basically describe the arrival of one or more entities
 ;;into the system at a point in time. At a minimum, we want to know: t - when
 ;;the batch arrives pending - what's in the batch behavior - the behavior the
@@ -265,7 +265,7 @@
                        next-arrival next-size default-behavior))
 
 ;;I don't think we need to add behaviors...
-(defn next-batch
+#_(defn next-batch
   "Given a start time t, and an interarrival time
    function f::nil->number, generates a map of
    {:n arrival-count :t next-arrival-time} where t
@@ -294,7 +294,7 @@
 ;;generate a stream of batches.  In practice,
 ;;we're not holding onto the head, so this should
 ;;be memory-safe.
-(defn ->stochastic-batches
+#_(defn ->stochastic-batches
   ([t0 arrival-f size-f beh]
    (let [b     (next-batch t0 arrival-f size-f beh)
          tnext (:t b)]
@@ -331,6 +331,7 @@
 
 ;;If there's a result, then we can capture that and update the
 ;;ctx...
+
 
 (defprotocol IBatchGenerator
   (pop-batch  [g ctx]))
@@ -506,66 +507,68 @@
 ;;Both static and dynamic schedules reify down to an interleaved sequence of
 ;;entity orders by time. This is the entity schedule.
 
+)
 
 ;;Basic protocols
 ;;===============
-(defprotocol IPrimitiveBatchSchedule
+#_(defprotocol IPrimitiveBatchSchedule
   (next-batch    [schd])
   (current-batch [schd]))
 
 ;;say we have static entities from an arrivals file,
 ;;or some other source.
-(def ents
-  [{:t 1 :entities [{:name :bilbo
-                     :age 180}
-                    {:name :sam
-                     :age 182}
-                    {:name :grimlock
-                     :age  :me-grimlock-me-no-care}]}
-   {:t 50 :entities [{:name :foxy
-                      :age 2}
-                     {:name :beowulf
-                      :age 2}
-                     {:name :hearty
-                      :age  :3}]}])
+#_(def ents
+    [{:t 1 :entities [{:name :bilbo
+                       :age 180}
+                      {:name :sam
+                       :age 182}
+                      {:name :grimlock
+                       :age  :me-grimlock-me-no-care}]}
+     {:t 50 :entities [{:name :foxy
+                        :age 2}
+                       {:name :beowulf
+                        :age 2}
+                       {:name :hearty
+                        :age  :3}]}])
 
 ;;This conveys two batches of 3 entities a-piece.
 ;;We'd like to load these into an arrivals schedule.
 
 ;;The simplest implementation is to create an entity
-(def the-schedule
-  {:name    :some-arrival-schedule
-   :pending ents
-   :tstart (first (map :t ents))
-   })
+#_(def the-schedule
+    {:name    :some-arrival-schedule
+     :pending ents
+     :tstart (first (map :t ents))
+     })
 
 ;;if we have an entity for :arrival, we can register the-schedule
 ;;as a schedule...
 
-(def arrival-entity
-  {:name :arrival
-   :schedules {:some-arrival-schedule the-schedule}})
+#_(def arrival-entity
+    {:name :arrival
+     :schedules {:some-arrival-schedule the-schedule}})
 
 ;;Now when we process arrivals, we break up the op into two phases...
 ;;old...
 #_(defn process-arrivals
-  "The arrivals system processes batches of entities and schedules more arrival
-   updates.  batch->entities should be a function that maps a batch, 
-   {:t long :n long} -> [entity*]"
-  ([batch->entities ctx]
-   (if-let [arrivals? (seq (sim/get-updates :arrival (sim/current-time ctx) ctx))]
-     (let [_      (debug "[<<<<<<Processing Arrivals!>>>>>>]")
-           arr    (store/get-entity ctx :arrival) ;;known entity arrivals...
-           {:keys [pending arrival-fn next-batch]}    arr
-           new-entities (batch->entities pending)
-           new-batch    (next-batch (:t pending) ctx)]
-       (->> ctx
-            (services/handle-arrivals (:t pending) new-entities)
-            (services/schedule-arrivals new-batch)))
-     (do (spork.ai.core/debug "No arrivals!")
-         ctx)))
-  ([ctx] (process-arrivals (or (store/gete ctx :parameters :batch->entities)
-                               services/batch->entities) ctx)))
+    "The arrivals system processes batches of entities and schedules more
+   arrival updates. batch->entities should be a function that maps a batch, {:t
+   long :n long} -> [entity*]"
+    ([batch->entities ctx]
+     (if-let [arrivals? (seq (sim/get-updates :arrival
+                                 (sim/current-time ctx) ctx))]
+       (let [_      (debug "[<<<<<<Processing Arrivals!>>>>>>]")
+             arr    (store/get-entity ctx :arrival) ;;known entity arrivals...
+             {:keys [pending arrival-fn next-batch]}    arr
+             new-entities (batch->entities pending)
+             new-batch    (next-batch (:t pending) ctx)]
+         (->> ctx
+              (services/handle-arrivals (:t pending) new-entities)
+              (services/schedule-arrivals new-batch)))
+       (do (spork.ai.core/debug "No arrivals!")
+           ctx)))
+    ([ctx] (process-arrivals (or (store/gete ctx :parameters :batch->entities)
+                                 services/batch->entities) ctx)))
 
 (defprotocol IBatchProvider
   (peek-batch [o])
@@ -618,28 +621,6 @@
          (offset t it)
          (assoc it :behavior b))))
 
-;;currently, random batches are maps.
-;;constant batches are sequences of primitive entities.
-(defn peek-batch-map [m]
-  (:pending m))
-
-(defn push-batch-map [m b]
-  (let [newm (assoc m :pending b)]
-    (if-not (:capacity m)
-      newm
-      (update newm :capacity - (:n b)))))
-
-(defn pop-batch-map [m]
- (let [b (peek-batch m)]
-   (->> (gen-batch (:t b) m)
-        (push-batch-map m))))
-
-;;We can compute a successive batch from a seed
-(defrecord batchseed [tstart tstop interarrival size  capacity behavior]
-  IBatchProvider
-  (peek-batch [o] (peek-batch-map o))
-  (pop-batch  [o] (pop-batch-map o)))
-
 ;;this works for persistent, immutable batches.
 (defn gen-batch
   ([t {:keys [tstart tstop interarrival size capacity beh]}]
@@ -652,11 +633,41 @@
                  (if (pos? delta)
                    b
                    (assoc b :n capacity)))))))
-  ([b] (gen-batch 0 bt)))
+  ([b] (gen-batch 0 b)))
 
-(defn ->random-schedule [& {:keys [tstart tstop interarrival size  capacity behavior]
-                            :or {tstart 0
-                                 size   1}}]
+
+;;currently, random batches are maps.
+;;constant batches are sequences of primitive entities.
+(defn peek-batch-map [m]
+  (:pending m))
+
+(defn in-bounds? [m b]
+  (or (not (:tstop m))
+      (<= (:t b) (:tstop m))))
+
+(defn push-batch-map [m b]
+  (let [newm (assoc m :pending b)]
+    (if-not (:capacity m)
+      newm
+      (update newm :capacity - (:n b)))))
+
+(defn pop-batch-map [m]
+  (let [b (peek-batch m)
+        new-batch  (gen-batch (:t b) m)]
+   (if (in-bounds? m new-batch)
+     (push-batch-map m new-batch)
+     (assoc m :pending nil))))
+
+
+;;We can compute a successive batch from a seed
+(defrecord batchseed [tstart tstop interarrival size  capacity behavior]
+  IBatchProvider
+  (peek-batch [o] (peek-batch-map o))
+  (pop-batch  [o] (pop-batch-map o)))
+
+(defn ->random-schedule
+  [& {:keys [tstart tstop interarrival size  capacity behavior]
+      :or {tstart 0 size 1}}]
   (let [b (->batchseed tstart
                        tstop
                        interarrival
@@ -665,6 +676,17 @@
                        behavior)]
     (assoc b :pending (gen-batch tstart b))))
 
+;;defines a sequence-based schedule of entity arrivals
+(defn ->known-schedule [behavior xs]
+  {:pending  xs
+   :behavior behavior})
+
+(extend-protocol IBatchProvider
+  clojure.lang.PersistentArrayMap
+  (peek-batch [o] (first (:pending  o)))
+  (pop-batch  [o] (update o :pending rest)))
+
+;;useful for testing...
 (defn finite-schedule [bt]
   (->> bt
        (iterate pop-batch)
@@ -680,21 +702,19 @@
 (defn pop-batches
   "Given a context, and entity realization function, and selected schedule
   entities, computes a map of {:keys [entities updates schedules]}"
-  [ctx batch->entities schedules]
+  [#_ctx batch->entities schedules]
+  ;;we need to traverse each schedule
   (reduce (fn [{:keys [entities updates schedules ctx]} sched]
-            (let [b                (peek-batch sched)
-                  new-sched        (pop-batch  sched)]
-              {:entities  (into entities (batch->entities b))
-               :updates   (assoc updates (:name sched)
-                                 (:tnext (first-batch new-sched)))
+            (let [b                (peek-batch sched) ;;get the next-batch.
+                  new-sched        (pop-batch  sched)] ;;get the next-schedule (if any)
+              {:entities  (into entities (batch->entities b)) ;;collect entities
+               :updates   (if-let [t (:t (peek-batch new-sched))]
+                            (conj updates t) updates)
                :schedules (conj schedules new-sched)
-               :ctx ctx}))
-   ;;we need to traverse each schedule.
-  ;;get the next-batch.
-  ;;get the next-schedule (if any)
-  ;;Compute a map of
-          {:entities  [] :updates   {} :schedules [] :ctx ctx}) schedules)
+               #_ :ctx #_ ctx}))
+          {:entities  [] :updates   #{} :schedules [] #_:ctx #_ctx} schedules))
 
+(comment 
 ;;in services...
 (defn active-schedules [ctx t schedule-names]
   (store/select-entities ctx
@@ -725,7 +745,7 @@
          ctx)))
   ([ctx] (process-arrivals (or (store/gete ctx :parameters :batch->entities)
                                services/batch->entities) ctx)))
-
+)
 
 
 
