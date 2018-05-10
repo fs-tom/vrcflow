@@ -243,10 +243,10 @@
 
 ;;this works for persistent, immutable batches.
 (defn gen-batch
-  ([t {:keys [tstart tstop interarrival size capacity beh]}]
+  ([t {:keys [tstart tstop interarrival size capacity behavior]}]
    (when (and  (>= t tstart)
                (or (not tstop) (< t tstop)))
-     (let [b (next-batch t interarrival size beh)]
+     (let [b (next-batch t interarrival size behavior)]
        (if-not capacity b
                (let [n (:n b)
                      delta (- capacity n)]
@@ -272,7 +272,7 @@
       (update newm :capacity - (:n b)))))
 
 (defn pop-batch-map [m]
-  (let [b (peek-batch m)
+  (let [b          (peek-batch m) 
         new-batch  (gen-batch (:t b) m)]
    (if (in-bounds? m new-batch)
      (push-batch-map m new-batch)
@@ -293,21 +293,43 @@
                        interarrival
                        size
                        capacity
-                       behavior)]
-    (assoc b :pending (gen-batch tstart b))))
+                       behavior)
+        pending (gen-batch tstart b)]
+    {:pending       (assoc b :pending pending)
+     :schedule-type :random}))
 
 ;;defines a sequence-based schedule of entity arrivals
+;;no batch-see defined.
 (defn ->known-schedule [behavior xs]
   {:pending  xs
-   :behavior behavior})
+   :behavior behavior
+   :schedule-type :known})
 
+(defn generic-peek [o]
+  (case (:schedule-type o)
+    :random (peek-batch (:pending o))
+    :known  (first (:pending o))
+    (throw (ex-info "unknown-schedule-type" o))))
+    
 ;;this is just a simple wrapper around generic maps
+;;and entities
 ;;to implement arrivals schedules.
+(defn generic-pop  [o]
+  (case (:schedule-type o)
+    :random  (update o :pending pop-batch) 
+    :known   (update o :pending rest) 
+    (throw (ex-info "unknown-schedule-type" o))))
 
 (extend-protocol IBatchProvider
   clojure.lang.PersistentArrayMap
-  (peek-batch [o] (first (:pending  o)))
-  (pop-batch  [o] (update o :pending rest)))
+  (peek-batch [o] (generic-peek o))
+  (pop-batch  [o] (generic-pop o))
+  clojure.lang.PersistentArrayMap
+  (peek-batch [o] (generic-peek o))
+  (pop-batch  [o] (generic-pop o))
+  spork.entitysystem.store.entity
+  (peek-batch [o] (generic-peek o))
+  (pop-batch  [o] (generic-pop o)))
 
 ;;useful for testing...
 (defn finite-schedule [bt]
@@ -341,12 +363,106 @@
     {:t n
      :entities (services/batch->entities {:t n :n 1 :behavior nil})}))
 
-(comment 
 ;;in services...
-(defn active-schedules [ctx t schedule-names]
-  (store/select-entities ctx
-     :from [:schedule]
-     :where (fn [e] (= (:t e) t))))
+#_ (defn active-schedules [ctx t schedule-names]
+     (store/select-entities ctx
+                            :from [:schedule]
+                            :where (fn [e] (= (:t e) t))))
+
+(defn get-schedules [ctx]
+  (-> ctx 
+      (store/select-entities :from [:schedule])))
+
+;;High Level API
+;;==============
+
+;;We have the concept of schedules, which imply entity arrivals...
+(defn next-schedule-id [ctx]
+  (keyword (str "schedule" (or (some-> (store/get-domain ctx :schedule) count)
+                               0))))
+
+;;how do we define schedules?
+;;Is there a default schedule we can use?
+;;If we don't define a name for the schedule, we
+;;just push onto the :default schedule?
+;;or do we generate a name for it?
+(defn push-schedule
+  ([ctx id sched]
+   ;;we add the schedule entity, and ensure it's
+   ;;registered with the arrival entity.
+   (let [arr    (store/get-entity ctx :arrival)
+         t       (:t (peek-batch sched))]
+     (-> ctx 
+         (store/add-entity (merge arr
+                                  {:schedules (-> arr
+                                                  (get :schedules #{})
+                                                  (conj id))
+                                   :tnext     (if-let [tprev (:tnext arr)]
+                                                (min tprev t)
+                                                t)}))
+         (store/add-entity (assoc sched :name id)))))
+  ([ctx sched]
+   ;;create a new schedule id and push sched
+   (push-schedule ctx (next-schedule-id ctx) sched)))
+
+(comment ;;testing
+  (def known-schedule  (->known-schedule  :default-behavior (random-ents 3)))
+  (def random-schedule (->random-schedule :tstart 10 :tstop 50
+                                          :interarrival #(rand-int 5)
+                                          :size 1 :behavior :default-behavior))
+  
+)
+
+(comment
+
+  ;;we want to alter services/schedule-arrivals to use
+  ;;some variant of push-schedule....
+  
+(defn init
+  "Creates an initial context with a fresh distribution, schedules initial
+   batch of arrivals too.  If no inital arrivals are provided,
+   generates an initial arrival batch based on the supplied
+   distribution."
+  ([ctx & {:keys [default-behavior service-network initial-arrivals
+                  interarrival batch-size]
+           :or {default-behavior beh/client-beh
+                service-network  services/basic-network
+                interarrival (stats/exponential-dist 5) 
+                batch-size 1}}]
+   (let [next-arrival (fn next-arrival [] (long (interarrival)))
+         next-size    (if (number? batch-size)
+                        (let [n (long batch-size)] (fn next-size [] n))
+                        (fn next-size    [] (long (batch-size))))
+         ;;default batching function assumes current-time and builds
+         ;;a batch stochastically based on random interarrival time
+         ;;and random batch-size (if specified).
+         ;;next-batch should take 2 arity, t and ctx, to allow
+         ;;other batch functions to access the context, say to
+         ;;compute deferred batches (pre-scheduled arrivals).
+         next-batch   (fn next-batch   [t ctx]
+                          (services/next-batch t
+                              next-arrival next-size default-behavior))]
+     (->>  ctx 
+           (sim/merge-entity  {:arrival {:arrival-fn next-arrival
+                                         :batch-size next-size
+                                         :next-batch next-batch}
+                               :parameters {:default-behavior default-behavior
+                                            :service-network  service-network}})
+           (services/schedule-arrivals
+            (or initial-arrivals
+                (next-batch (sim/get-time ctx) ctx))
+              #_(services/next-batch (sim/get-time ctx) f default-behavior))
+           (services/register-providers service-network)
+           )))
+  ([] (init emptysim)))
+  
+  (defn init-arrivals [ctx xs]
+    )
+  )
+
+
+(comment 
+
 
 ;;new....
 (defn process-arrivals
