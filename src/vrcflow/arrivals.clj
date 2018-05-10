@@ -265,12 +265,14 @@
   (or (not (:tstop m))
       (<= (:t b) (:tstop m))))
 
+;;maybe move to batchseed impl
 (defn push-batch-map [m b]
   (let [newm (assoc m :pending b)]
     (if-not (:capacity m)
       newm
       (update newm :capacity - (:n b)))))
 
+;;maybe move to batchseed impl
 (defn pop-batch-map [m]
   (let [b          (peek-batch m) 
         new-batch  (gen-batch (:t b) m)]
@@ -296,12 +298,14 @@
                        behavior)
         pending (gen-batch tstart b)]
     {:pending       (assoc b :pending pending)
+     :t             (:t pending)
      :schedule-type :random}))
 
 ;;defines a sequence-based schedule of entity arrivals
 ;;no batch-see defined.
 (defn ->known-schedule [behavior xs]
   {:pending  xs
+   :t        (:t (first xs))
    :behavior behavior
    :schedule-type :known})
 
@@ -316,8 +320,16 @@
 ;;to implement arrivals schedules.
 (defn generic-pop  [o]
   (case (:schedule-type o)
-    :random  (update o :pending pop-batch) 
-    :known   (update o :pending rest) 
+    :random  (as-> o it
+               (update it :pending pop-batch)
+               (if-let [t (:t (peek-batch it))]
+                 (assoc it :t t)
+                 (dissoc it :t)))
+    :known   (as-> o it
+               (update it :pending (comp seq rest))
+               (if-let [t (:t (peek-batch it))]
+                 (assoc it :t t)
+                 (dissoc it :t)))
     (throw (ex-info "unknown-schedule-type" o))))
 
 (extend-protocol IBatchProvider
@@ -330,6 +342,9 @@
   spork.entitysystem.store.entity
   (peek-batch [o] (generic-peek o))
   (pop-batch  [o] (generic-pop o)))
+
+(defn peek-pop-batch [sched]
+  [(peek-batch sched) (pop-batch sched)])
 
 ;;useful for testing...
 (defn finite-schedule [bt]
@@ -347,16 +362,21 @@
 (defn pop-batches
   "Given a context, and entity realization function, and selected schedule
   entities, computes a map of {:keys [entities updates schedules]}"
-  [batch->entities schedules]
+  ([batch->entities schedules]
   ;;we need to traverse each schedule
-  (reduce (fn [{:keys [entities updates schedules ctx]} sched]
-            (let [b                (peek-batch sched) ;;get the next-batch.
-                  new-sched        (pop-batch  sched)] ;;get the next-schedule (if any)
-              {:entities  (into entities (batch->entities b)) ;;collect entities
-               :updates   (if-let [t (:t (peek-batch new-sched))]
-                            (conj updates t) updates)
-               :schedules (conj schedules new-sched)}))
-          {:entities  [] :updates   #{} :schedules []} schedules))
+   (reduce (fn [{:keys [entities updates schedules ctx]} sched]
+             (let [b                (peek-batch sched) ;;get the next-batch.
+                   new-sched        (pop-batch  sched)] ;;get the next-schedule (if any)
+               {:entities  (into entities (batch->entities b)) ;;collect entities
+                :updates   (if-let [t (:t (peek-batch new-sched))]
+                             (conj updates t) updates)
+                :schedules (conj schedules new-sched)}))
+           {:entities  [] :updates   #{} :schedules []} schedules))
+  ([schedules] (pop-batches (fn [b]
+                              (or (:entities b)
+                                  (throw (ex-info "default batch fn only works on known entities!" b))))
+                            schedules)))
+                                
 
 (defn random-ents [n]
   (for [n (range n)]
@@ -364,21 +384,27 @@
      :entities (services/batch->entities {:t n :n 1 :behavior nil})}))
 
 ;;in services...
-#_ (defn active-schedules [ctx t schedule-names]
+(defn active-schedules
+  ([ctx t schedule-names]
      (store/select-entities ctx
-                            :from [:schedule]
+                            :from [:schedule-type]
                             :where (fn [e] (= (:t e) t))))
+  ([ctx t] (when-let [names (store/gete ctx :arrival :schedules)]
+             (active-schedules ctx t names)))
+  ([ctx] (when-let [names (store/gete ctx :arrival :schedules)]
+           (active-schedules ctx (spork.sim.core/get-time ctx)
+                             names))))
 
 (defn get-schedules [ctx]
   (-> ctx 
-      (store/select-entities :from [:schedule])))
+      (store/select-entities :from [:schedule-type])))
 
 ;;High Level API
 ;;==============
 
 ;;We have the concept of schedules, which imply entity arrivals...
 (defn next-schedule-id [ctx]
-  (keyword (str "schedule" (or (some-> (store/get-domain ctx :schedule) count)
+  (keyword (str "schedule" (or (some-> (store/get-domain ctx :schedule-type) count)
                                0))))
 
 ;;how do we define schedules?
@@ -390,7 +416,7 @@
   ([ctx id sched]
    ;;we add the schedule entity, and ensure it's
    ;;registered with the arrival entity.
-   (let [arr    (store/get-entity ctx :arrival)
+   (let [arr     (store/get-entity ctx :arrival)
          t       (:t (peek-batch sched))]
      (-> ctx 
          (store/add-entity (merge arr
@@ -410,6 +436,10 @@
   (def random-schedule (->random-schedule :tstart 10 :tstop 50
                                           :interarrival #(rand-int 5)
                                           :size 1 :behavior :default-behavior))
+  (def ctx (-> spork.sim.core/emptysim
+               (store/add-entity {:name :arrival})
+               (push-schedule  known-schedule)
+               (push-schedule  random-schedule)))
   
 )
 
