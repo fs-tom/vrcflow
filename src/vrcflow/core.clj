@@ -275,7 +275,7 @@
                                 :tmax tmax
                                 :step-function step
                                 :keep-simulating? (fn [_] true)))
-  ([seed]       (step-day seed (* 60 8)))
+  ([seed]       (step-day (* 60 8) seed))
   ([] (step-day (sim/advance-time (seed-ctx)))))
 
 (def errs (atom nil))

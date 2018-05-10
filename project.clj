@@ -5,7 +5,7 @@
             :url "http://www.eclipse.org/legal/epl-v10.html"}
   :source-paths ["src" "../spork/src" #_""]
   :dependencies [[org.clojure/clojure  "1.9.0"]
-                 [spork "0.2.0.8-SNAPSHOT"]
+                 [spork "0.2.0.9-SNAPSHOT"]
                  [joinr/incanter "1.9.3-SNAPSHOT"]
                  [piccolotest "0.1.2-SNAPSHOT"]
                  [org.clojure/spec.alpha "0.1.143"]

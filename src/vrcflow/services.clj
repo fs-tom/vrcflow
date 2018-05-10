@@ -49,6 +49,7 @@
 (defn service-plans [db] (map (juxt :name :service-plan) (clients db)))
 (defn providers [db] (store/select-entities db :from :provider-entity))
 (defn active-providers [db] (filter (comp seq :clients) (providers db)))
+
 (defn service-time [db provider svc]
   (let [service-net (service-network db)]
     (if-not (-> service-net meta :process-network)
@@ -488,12 +489,20 @@
       ctx
       (f ctx (store/get-entity ctx id)))))
 
+;;enable gaussian noise for sensitivty analysis.
+;;we check a flag to see if we add noise proportional
+;;to the input (a constant service time).
+;;If so, we compute the service time by drawing
+;;from a gaussian distribution mean of 0 (no noise),
+(def ^:dynamic *noise-function* nil)
+
 (defn allocate-provider
   "Allocate the entity to the provider's service.  If the provider
    has a begin-service function associated, it will be applied to the
    entity during allocation."
   [ctx provider svc id]
-  (let [wait-time (service-time ctx provider svc)]
+  (let [wait-time (service-time ctx provider svc)
+        wait-time (if-not *noise-function* wait-time (*noise-function* wait-time))]
     (debug [:assigning id :to svc :for wait-time (dissoc (store/get-entity ctx id) :behavior)])
     (->> (store/mergee ctx id {:active-service svc :unoccupied false})
          (add-client provider id)
