@@ -322,26 +322,26 @@
   (case (:schedule-type o)
     :random  (as-> o it
                (update it :pending pop-batch)
-               (if-let [t (:t (peek-batch it))]
-                 (assoc it :t t)
+               (if-let [t  (:t (peek-batch it))]
+                 (assoc  it :t t)
                  (dissoc it :t)))
     :known   (as-> o it
                (update it :pending (comp seq rest))
                (if-let [t (:t (peek-batch it))]
-                 (assoc it :t t)
+                 (assoc  it :t t)
                  (dissoc it :t)))
     (throw (ex-info "unknown-schedule-type" o))))
 
 (extend-protocol IBatchProvider
   clojure.lang.PersistentArrayMap
   (peek-batch [o] (generic-peek o))
-  (pop-batch  [o] (generic-pop o))
+  (pop-batch  [o] (generic-pop  o))
   clojure.lang.PersistentArrayMap
   (peek-batch [o] (generic-peek o))
-  (pop-batch  [o] (generic-pop o))
+  (pop-batch  [o] (generic-pop  o))
   spork.entitysystem.store.entity
   (peek-batch [o] (generic-peek o))
-  (pop-batch  [o] (generic-pop o)))
+  (pop-batch  [o] (generic-pop  o)))
 
 (defn peek-pop-batch [sched]
   [(peek-batch sched) (pop-batch sched)])
