@@ -1,0 +1,104 @@
+0 End Family Services
+1 HHS/State Services
+2 Shared Services & Volunteers
+3 ERC Holding Area
+4 Customs and Immigration
+5 Aircraft Arrival and Debarkation
+6 NTS Scan Point
+7 CTO
+8 Clearance
+9 Update Orders
+10 Legal
+11 Begin Family Services
+12 Standard Processing
+13 Needs Assessment
+14 EXIT
+15 Fast Track Processing
+16 Alternate NTS  Scan Point
+17 Family Services
+18 Produce Orders
+19 Finance (Comprehensive Counseling)
+20 Triage And Sort
+21 Waiting
+22 Movement to JRPC/ERPC
+23 Luggage Holding Area
+24 Tricare
+25 WAIT
+26 DODS
+27 Casualty Assistance
+28 :provider
+29 Comprehensive Processing
+30 Move To Final Destination
+31 JRPC Holding Area
+32 Finance
+33 ENTER
+#
+0 7 
+1 8 
+2 31 
+2 3 
+3 1 
+4 22 
+5 6 
+6 4 
+7 8 10
+8 14 
+9 32 5
+10 0 
+11 10 5
+11 27 5
+11 24 5
+11 26 5
+12 9 5
+13 29 2
+13 12 2
+13 15 2
+15 8 5
+16 22 
+17 11 5
+18 19 10
+19 17 10
+20 31 
+20 2 
+20 3 
+21 14 35
+22 23 
+23 20 
+23 30 
+24 0 
+25 21 
+26 0 
+27 0 
+28 0 
+28 1 
+28 2 
+28 3 
+28 4 
+28 5 
+28 6 
+28 7 
+28 8 
+28 9 
+28 10 
+28 11 
+28 12 
+28 13 
+28 15 
+28 16 
+28 18 
+28 19 
+28 20 
+28 21 
+28 22 
+28 23 
+28 24 
+28 26 
+28 27 
+28 29 
+28 30 
+28 31 
+28 32 
+29 18 10
+31 13 
+32 7 5
+33 31 
